@@ -86,7 +86,7 @@ def jooble_list():
     df['id'] = df['id'].astype(str).str.lstrip('-')
     df['id'] = pd.to_numeric(df['id'], errors='coerce')
     
-    output_path = os.path.join(os.getcwd(), "Documents/job_list.csv")
+    output_path = os.path.join(os.getcwd(), "Documents/jooble_list.csv")
     print(f"Saving results to {output_path}")
     df.to_csv(output_path, index=False)
     print(df)
