@@ -7,8 +7,10 @@ This was born out of a desire to share my projects with the public, I've been up
 ### First thing...
 1. To get started, clone the repository.
 2. Open MS Powershell, Git Bash or the windows command line; run them as administrator. 
-3. Make sure the directory is set to your project folder using ```cd path/to/the/project/folder```. Then, run ```pip install -r requirements.txt```. This will install the needed libraries into your virtual environment, requirements.txt in included within the repository.
-4. Edit/rename the 'example.env' file with the key that you'll need to obtain here: https://jooble.org/api/about. Make sure the paths match to where that .env file is in the source code. 
+3. Make sure the directory is set to your project folder using ```cd path/to/the/project/folder```.
+4. Run ```pip install -r requirements.txt```. This will install the needed libraries into your virtual environment, requirements.txt in included within the repository.
+5. Edit/rename the 'example.env' file with the key that you'll need to obtain here: https://jooble.org/api/about.
+6. Make sure the paths match to where that .env file is in the source code. 
 
 
 ## Setting up a Virtual Environment
