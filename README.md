@@ -39,6 +39,7 @@ The needed libraries and enviroment file should be configured, after that it's t
 ## To-Dos:
 1. Code in the ability to send the output .csv as an email to yourself or others.
 2. Further refinements, adding logic to exit the program during loop sequences.
-3. Maybe give the option to save the resulting dataset to .xlsx for further manipulation in Excel. 
+3. Maybe give the option to save the resulting dataset to .xlsx for further manipulation in Excel.
+4. Add in Docker support for orchestration purposes. 
    
 
