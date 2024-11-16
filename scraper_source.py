@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 
-load_dotenv("Documents/Python Projects/challenge_4.5.env")
+load_dotenv("jooble_scraper/jooble_scraper.env")
 
 
 # List needed to append, in order to store processed data 
