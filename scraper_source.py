@@ -9,6 +9,8 @@ load_dotenv("jooble_scraper/jooble_scraper.env")
 
 # List needed to append, in order to store processed data 
 key = os.getenv("KEY")
+if not key:
+    raise ValueError("Missing API key. Please set it in your .env file.")
 
 base_url = f'https://jooble.org/api/{key}'
 headers = {"Content-type": "application/json"}
