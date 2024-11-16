@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 load_dotenv("Documents/Python Projects/challenge_4.5.env")
 
 
-
 # List needed to append, in order to store processed data 
 key = os.getenv("KEY")
 
