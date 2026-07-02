@@ -41,6 +41,18 @@ Exit 0 = pass.
 
 Expected output ends with `PASS: ...\Documents\jooble_list.csv — N rows, columns OK`.
 
+The importable data layer (`jooble_data.py`, repo root — see `INTERFACE.md`)
+has its own mock smoke test, also no key needed:
+
+```bash
+./venv/Scripts/python .claude/skills/run-jooble-scraper/driver.py --module
+```
+
+It exercises `jooble_data.fetch_jobs` against a mocked `requests.post` and
+validates the 12-column DataFrame (incl. lat/lon), the `days` filter, the
+`limit` cap, negative-id preservation, offline geocoding, and that HTTP 403
+raises `JoobleApiError`. Expected output: `PASS: jooble_data.fetch_jobs — ... all OK`.
+
 With a real key you can run the same validation against the live API
 (unverified here — no key available in this repo):
 
@@ -50,6 +62,28 @@ KEY=<real-key> ./venv/Scripts/python .claude/skills/run-jooble-scraper/driver.py
 
 Output CSV → `Documents/jooble_list.csv` (under the repo root; the driver
 creates the directory and deletes any stale CSV before each run).
+
+## Run: Dash app
+
+`app.py` (repo root) is the Dash UI over `jooble_data.fetch_jobs` — data
+table, map, and a fetch dialog. It starts fine with no `KEY` set (empty
+state + message); fetches only run from the dialog, never at import/page
+load.
+
+```bash
+./venv/Scripts/python app.py            # serves http://127.0.0.1:8050
+curl http://127.0.0.1:8050              # returns the Dash index page
+```
+
+UI smoke test (no key needed — mocks `requests.post` with the canned Jooble
+payload and exercises `do_fetch`, the map builder, and the Dash callback
+endpoint):
+
+```bash
+./venv/Scripts/python .claude/skills/run-jooble-scraper/ui_smoke.py
+```
+
+Expected output: `PASS: ui_smoke — ... all OK`.
 
 ## Run (human path)
 

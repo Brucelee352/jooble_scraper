@@ -8,9 +8,13 @@ Modes:
                                 response and feeds the interactive prompt.
   python driver.py --live       live mode: real HTTP to jooble.org.
                                 Requires a real KEY in the environment.
+  python driver.py --module     smoke-test the importable data layer
+                                (jooble_data.fetch_jobs) against mocked
+                                requests.post. No API key needed.
 
 Options:
-  --pages N    page count fed to the script's input() prompt (default 2)
+  --pages N    page count fed to the script's input() prompt (default 2;
+               legacy scraper_source.py mode only)
 
 Exit code 0 = scraper ran and CSV validated; 1 = failure.
 """
@@ -112,14 +116,121 @@ def validate(csv_path, pages, live):
     return None
 
 
+def run_module_smoke():
+    """Exercise jooble_data.fetch_jobs against a mocked requests.post.
+
+    Returns an error string on failure, None on success.
+    """
+    import math
+    from datetime import datetime, timedelta
+
+    sys.path.insert(0, str(UNIT_ROOT))
+    import requests
+
+    import jooble_data
+
+    now = datetime.now()
+
+    def iso(days_ago):
+        return (now - timedelta(days=days_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%S.0000000")
+
+    jobs = [
+        {"id": -7000123456789012345, "title": "Data Engineer",
+         "company": "Acme Analytics", "location": "Austin, TX",
+         "salary": "$120k - $150k", "type": "Full-time",
+         "snippet": "Pipelines.", "link": "https://jooble.org/jdp/1",
+         "updated": iso(1), "source": "example.com"},
+        {"id": 8000987654321098765, "title": "Analytics Engineer",
+         "company": "Globex Corp", "location": "Remote, United States",
+         "salary": "", "type": "Contract",
+         "snippet": "dbt + Snowflake.", "link": "https://jooble.org/jdp/2",
+         "updated": iso(3), "source": "jobs.example.org"},
+        {"id": 12345, "title": "Stale Engineer",
+         "company": "Oldco", "location": "Cheyenne, Wyoming",
+         "salary": "", "type": "Full-time",
+         "snippet": "Too old.", "link": "https://jooble.org/jdp/3",
+         "updated": iso(10), "source": "old.example.com"},
+    ]
+
+    class FakeResp:
+        def __init__(self, payload, status=200):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, **kw):
+        page = int(kw["json"]["page"])
+        # two pages of results, then the API runs dry
+        payload = {"totalCount": 6, "jobs": jobs if page <= 2 else []}
+        return FakeResp(payload)
+
+    kwargs = dict(max_retries=0, retry_wait=0.0)
+
+    with mock.patch.dict(os.environ, {"KEY": "fake-key-for-mock-run"}), \
+            mock.patch.object(requests, "post", fake_post):
+        df = jooble_data.fetch_jobs(days=7, **kwargs)
+        if list(df.columns) != jooble_data.COLUMNS:
+            return f"unexpected columns: {list(df.columns)}"
+        if len(df) != 4:  # 2 fresh jobs per page x 2 pages; stale one dropped
+            return f"days=7 expected 4 rows, got {len(df)}"
+        if not str(df["updated"].dtype).startswith("datetime64"):
+            return f"'updated' dtype is {df['updated'].dtype}, not datetime64"
+        neg = df.loc[df["title"] == "Data Engineer", "id"].iloc[0]
+        if neg != "-7000123456789012345":
+            return f"negative id corrupted: {neg!r}"
+        austin = df.loc[df["location"] == "Austin, TX"].iloc[0]
+        if abs(austin["lat"] - 30.2672) > 0.01 or abs(austin["lon"] + 97.7431) > 0.01:
+            return f"Austin, TX geocoded to ({austin['lat']}, {austin['lon']})"
+        remote = df.loc[df["location"] == "Remote, United States"].iloc[0]
+        if not (math.isnan(remote["lat"]) and math.isnan(remote["lon"])):
+            return f"ungeocodable row got coords ({remote['lat']}, {remote['lon']})"
+
+        df2 = jooble_data.fetch_jobs(days=2, **kwargs)
+        if len(df2) != 2:  # only the 1-day-old job, once per page
+            return f"days=2 expected 2 rows, got {len(df2)}"
+
+        df3 = jooble_data.fetch_jobs(days=7, limit=3, **kwargs)
+        if len(df3) != 3:
+            return f"limit=3 expected 3 rows, got {len(df3)}"
+
+    # 403 must raise JoobleApiError with status_code
+    with mock.patch.dict(os.environ, {"KEY": "bad-key"}), \
+            mock.patch.object(requests, "post",
+                              lambda *a, **kw: FakeResp({}, status=403)):
+        try:
+            jooble_data.fetch_jobs(**kwargs)
+        except jooble_data.JoobleApiError as exc:
+            if exc.status_code != 403:
+                return f"403 raised JoobleApiError but status_code={exc.status_code}"
+        else:
+            return "403 response did not raise JoobleApiError"
+
+    # state-centroid fallback check (offline geocoder)
+    lat, lon = jooble_data.geocode_location("Cheyenne, Wyoming")
+    if abs(lat - 42.9957) > 0.01:
+        return f"state-name fallback failed: {(lat, lon)}"
+
+    print("PASS: jooble_data.fetch_jobs — columns, days filter, limit, "
+          "id sign, geocoding, and 403 -> JoobleApiError all OK")
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--live", action="store_true", help="hit the real Jooble API (needs KEY)")
     ap.add_argument("--pages", type=int, default=2, help="pages to request (default 2, max 10)")
+    ap.add_argument("--module", action="store_true",
+                    help="smoke-test jooble_data.fetch_jobs against a mocked API")
     args = ap.parse_args()
 
-    csv_path = run_scraper(args.pages, args.live)
-    error = validate(csv_path, args.pages, args.live)
+    if args.module:
+        error = run_module_smoke()
+    else:
+        csv_path = run_scraper(args.pages, args.live)
+        error = validate(csv_path, args.pages, args.live)
     if error:
         sys.exit(f"FAIL: {error}")
 
