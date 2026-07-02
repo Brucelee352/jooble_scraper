@@ -54,7 +54,11 @@ class FakeResp:
         return self._payload
 
 
+SENT_PAYLOADS = []
+
+
 def fake_post(url, **kw):
+    SENT_PAYLOADS.append(kw["json"])
     page = int(kw["json"]["page"])
     return FakeResp({"totalCount": 2, "jobs": FAKE_JOBS if page <= 1 else []})
 
@@ -90,6 +94,33 @@ def main():
     remote = next(r for r in records if r["company"] == "Globex Corp")
     assert math.isnan(remote["lat"]), "Remote job should have NaN lat"
 
+    # 2b. Custom keywords/location are passed through to the API payload.
+    SENT_PAYLOADS.clear()
+    with mock.patch.dict(os.environ, {"KEY": "fake-key-for-mock-run"}), \
+            mock.patch.object(requests, "post", fake_post):
+        records2, error = app_mod.do_fetch(7, "python developer", "Texas")
+    assert error is None, f"unexpected error: {error}"
+    assert SENT_PAYLOADS, "no API request was made"
+    assert all(p["keywords"] == "python developer" for p in SENT_PAYLOADS), \
+        SENT_PAYLOADS[0]
+    assert all(p["location"] == "Texas" for p in SENT_PAYLOADS), \
+        SENT_PAYLOADS[0]
+
+    # 2c. Blank/whitespace-only inputs fall back to the defaults.
+    import jooble_data
+    SENT_PAYLOADS.clear()
+    with mock.patch.dict(os.environ, {"KEY": "fake-key-for-mock-run"}), \
+            mock.patch.object(requests, "post", fake_post):
+        records3, error = app_mod.do_fetch(7, "   ", "")
+    assert error is None, f"unexpected error: {error}"
+    assert SENT_PAYLOADS, "no API request was made"
+    assert all(
+        p["keywords"] == jooble_data.DEFAULT_KEYWORDS for p in SENT_PAYLOADS
+    ), SENT_PAYLOADS[0]
+    assert all(
+        p["location"] == jooble_data.DEFAULT_LOCATION for p in SENT_PAYLOADS
+    ), SENT_PAYLOADS[0]
+
     # 3. Map figure: only geocodable rows plotted, unmapped count correct.
     import pandas as pd
     fig, unmapped = app_mod.build_map(pd.DataFrame(records))
@@ -115,16 +146,25 @@ def main():
             "output": output_key,
             "outputs": outputs,
             "inputs": [{"id": "do-fetch", "property": "n_clicks", "value": 1}],
-            "state": [{"id": "window-radio", "property": "value", "value": 7}],
+            "state": [
+                {"id": "window-radio", "property": "value", "value": 7},
+                {"id": "keywords-input", "property": "value",
+                 "value": "python developer"},
+                {"id": "location-input", "property": "value",
+                 "value": "Texas"},
+            ],
             "changedPropIds": ["do-fetch.n_clicks"],
         }
         resp = client.post("/_dash-update-component", json=body)
     assert resp.status_code == 200, (resp.status_code, resp.data[:500])
     text = resp.get_data(as_text=True)
     assert "Data Engineer" in text and "Globex Corp" in text, text[:500]
+    # The active-search line reflects the custom keywords/location.
+    assert "python developer" in text and "Texas" in text, text[:500]
 
     print("PASS: ui_smoke — import w/o KEY, error path mentions KEY, "
-          "mocked fetch, map figure, and Dash callback endpoint all OK")
+          "mocked fetch (incl. custom + default keywords/location), "
+          "map figure, and Dash callback endpoint all OK")
 
 
 if __name__ == "__main__":

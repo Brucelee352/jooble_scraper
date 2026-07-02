@@ -14,7 +14,12 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 
-from jooble_data import JoobleApiError, fetch_jobs
+from jooble_data import (
+    DEFAULT_KEYWORDS,
+    DEFAULT_LOCATION,
+    JoobleApiError,
+    fetch_jobs,
+)
 
 # Single-series marker color (accessible mid-blue on light map tiles).
 MARKER_COLOR = "#2f6fd6"
@@ -32,14 +37,24 @@ TABLE_COLUMNS = [
 US_CENTER = {"lat": 39.5, "lon": -98.35}
 
 
-def do_fetch(days: int):
+def normalize_search(keywords, location):
+    """Blank/whitespace-only inputs fall back to the data-layer defaults."""
+    keywords = (keywords or "").strip() or DEFAULT_KEYWORDS
+    location = (location or "").strip() or DEFAULT_LOCATION
+    return keywords, location
+
+
+def do_fetch(days: int, keywords: str | None = None,
+             location: str | None = None):
     """Core fetch logic, kept as a plain function so it is testable.
 
     Returns (records, error_message): exactly one of the two is not None.
     `records` is a list of dicts ready for dcc.Store / DataTable.
     """
+    keywords, location = normalize_search(keywords, location)
     try:
-        df = fetch_jobs(days=days, limit=100)
+        df = fetch_jobs(days=days, limit=100, keywords=keywords,
+                        location=location)
     except JoobleApiError as exc:
         msg = str(exc)
         if exc.status_code in (None, 401, 403):
@@ -100,6 +115,20 @@ fetch_modal = dbc.Modal(
         dbc.ModalHeader(dbc.ModalTitle("Fetch jobs from Jooble")),
         dbc.ModalBody(
             [
+                dbc.Label("Keywords", html_for="keywords-input"),
+                dbc.Input(
+                    id="keywords-input",
+                    type="text",
+                    value=DEFAULT_KEYWORDS,
+                    className="mb-3",
+                ),
+                dbc.Label("Location", html_for="location-input"),
+                dbc.Input(
+                    id="location-input",
+                    type="text",
+                    value=DEFAULT_LOCATION,
+                    className="mb-3",
+                ),
                 html.P("Pick the recency window (up to 100 jobs):"),
                 dbc.RadioItems(
                     id="window-radio",
@@ -132,6 +161,7 @@ app.layout = dbc.Container(
             className="my-2", n_clicks=0,
         ),
         fetch_modal,
+        html.Div(id="active-search", className="my-2 text-muted"),
         html.Div(id="empty-state", className="my-2"),
         dash_table.DataTable(
             id="jobs-table",
@@ -173,18 +203,24 @@ def open_modal(_n, is_open):
     Output("jobs-store", "data"),
     Output("fetch-status", "children"),
     Output("fetch-modal", "is_open", allow_duplicate=True),
+    Output("active-search", "children"),
     Input("do-fetch", "n_clicks"),
     State("window-radio", "value"),
+    State("keywords-input", "value"),
+    State("location-input", "value"),
     prevent_initial_call=True,
 )
-def run_fetch(_n, days):
-    records, error = do_fetch(int(days))
+def run_fetch(_n, days, keywords, location):
+    records, error = do_fetch(int(days), keywords, location)
     if error is not None:
-        return no_update, dbc.Alert(error, color="danger"), True
+        return no_update, dbc.Alert(error, color="danger"), True, no_update
+    keywords, location = normalize_search(keywords, location)
     return (
         records,
         dbc.Alert(f"Fetched {len(records)} jobs.", color="success"),
         False,
+        f'Showing results for "{keywords}" in "{location}" '
+        f"(last {int(days)} days).",
     )
 
 
