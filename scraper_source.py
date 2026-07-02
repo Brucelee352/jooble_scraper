@@ -1,5 +1,6 @@
 import requests as req
 import time
+import datetime as dt
 import os
 import pandas as pd
 from dotenv import load_dotenv

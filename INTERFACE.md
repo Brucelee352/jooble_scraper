@@ -19,11 +19,12 @@ Pure module: importing it performs no network calls, no I/O, no prompts.
 ```python
 def fetch_jobs(
     days: int = 7,                 # recency window: keep jobs updated within the last N days
-    limit: int = 100,              # stop after this many matching jobs
+    limit: int | None = 100,       # CAP on matching jobs; None = no cap
     keywords: str = "data engineer, analytics engineer",
     location: str = "United States",
     radius: int = 500,             # miles, sent to the API as a string
     *,
+    strict: bool = False,          # require a keyword phrase in title/snippet
     api_key: str | None = None,    # overrides the KEY env var
     max_pages: int = 10,           # hard cap on API pages fetched
     max_retries: int = 2,          # extra attempts after a 429/network failure
@@ -36,9 +37,23 @@ Behavior:
 
 - Paginates `POST https://jooble.org/api/{KEY}` until `limit` matching jobs
   are collected, a page returns no jobs, or `max_pages` is reached.
+- **`limit` is a cap, never a padding target**: only jobs that pass the
+  filters count toward it, and if fewer match, only those are returned
+  (e.g. `limit=50` with 4 matching jobs → 4 rows). `limit=None` means
+  uncapped — return every matching job; pagination is still bounded by
+  `max_pages` and stops at the first empty page.
 - The `days` window is filtered client-side on the `updated` timestamp
   (Jooble has no server-side date filter). For the "2-day increments" use
   case, call `fetch_jobs(days=2)`.
+- **`strict=True`** keeps a job only if at least one of the comma-separated
+  phrases in `keywords` appears as a case-insensitive **substring** of the
+  job's title or snippet (e.g. with the default keywords, a title of
+  "Senior Data Engineer" matches via the phrase "data engineer"; a
+  "Software Developer" row with no phrase in title/snippet is dropped).
+  Default `strict=False` returns whatever Jooble matched, which can be
+  fuzzy.
+- Duplicate job `id`s across pages are always dropped (first occurrence
+  wins), regardless of `strict`.
 - Jobs with an unparseable `updated` timestamp are dropped.
 - May return fewer than `limit` rows (including 0 — the empty DataFrame
   still has all 12 columns with the dtypes below).
@@ -103,5 +118,7 @@ The UI should wrap `fetch_jobs` in `try/except JoobleApiError` and show
 ```
 
 Runs `fetch_jobs` against a mocked `requests.post` (no key needed) and
-validates columns, the days filter, `limit`, id sign preservation,
-geocoding, and the 403 → `JoobleApiError` path.
+validates columns, the days filter, the `limit` cap (fewer matches than
+`limit` → fewer rows; `limit=None` → all matches), `strict=True` keyword
+filtering, cross-page id dedup, id sign preservation, geocoding, and the
+403 → `JoobleApiError` path.

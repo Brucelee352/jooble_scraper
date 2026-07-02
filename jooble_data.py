@@ -278,11 +278,12 @@ def _empty_frame() -> pd.DataFrame:
 
 def fetch_jobs(
     days: int = 7,
-    limit: int = 100,
+    limit: int | None = 100,
     keywords: str = DEFAULT_KEYWORDS,
     location: str = DEFAULT_LOCATION,
     radius: int = DEFAULT_RADIUS,
     *,
+    strict: bool = False,
     api_key: str | None = None,
     max_pages: int = 10,
     max_retries: int = 2,
@@ -293,9 +294,18 @@ def fetch_jobs(
 
     Paginates the Jooble search endpoint until ``limit`` jobs updated within
     the last ``days`` days have been collected, the API runs out of results,
-    or ``max_pages`` pages have been fetched. The recency filter is applied
+    or ``max_pages`` pages have been fetched. ``limit`` is a **cap**, never a
+    padding target — if only 4 jobs match the criteria, 4 rows come back.
+    Pass ``limit=None`` for no cap (pagination is still bounded by
+    ``max_pages`` and empty-page detection). The recency filter is applied
     client-side on the ``updated`` timestamp (Jooble has no reliable
     server-side date filter). Pass ``days=2`` for a 2-day window, etc.
+
+    ``strict=True`` additionally keeps only jobs where at least one of the
+    comma-separated phrases in ``keywords`` appears (case-insensitive,
+    substring match) in the job's title or snippet — trimming Jooble's
+    fuzzy matches. Duplicate job ids across pages are always dropped
+    (first occurrence wins).
 
     Returns a DataFrame with columns (in order):
         id (str — sign preserved), title, company, location, salary,
@@ -311,8 +321,11 @@ def fetch_jobs(
     key = _resolve_api_key(api_key)
     url = JOOBLE_URL_TEMPLATE.format(key=key)
     cutoff = datetime.now() - timedelta(days=days)
+    phrases = [p.strip().lower()
+               for p in keywords.split(",") if p.strip()] if strict else []
 
     rows: list[dict] = []
+    seen_ids: set[str] = set()
     for page in range(1, max_pages + 1):
         params = {
             "keywords": keywords,
@@ -332,10 +345,19 @@ def fetch_jobs(
                 updated = updated.tz_localize(None)
             if pd.isna(updated) or updated < cutoff:
                 continue
+            job_id = str(job.get("id", ""))
+            if job_id in seen_ids:
+                continue
+            if phrases:
+                haystack = (f"{job.get('title', '')} "
+                            f"{job.get('snippet', '')}").lower()
+                if not any(p in haystack for p in phrases):
+                    continue
             loc = job.get("location", "")
             lat, lon = geocode_location(loc)
+            seen_ids.add(job_id)
             rows.append({
-                "id": str(job.get("id", "")),
+                "id": job_id,
                 "title": job.get("title", ""),
                 "company": job.get("company", ""),
                 "location": loc,
@@ -348,9 +370,9 @@ def fetch_jobs(
                 "lat": lat,
                 "lon": lon,
             })
-            if len(rows) >= limit:
+            if limit is not None and len(rows) >= limit:
                 break
-        if len(rows) >= limit:
+        if limit is not None and len(rows) >= limit:
             break
 
     if not rows:

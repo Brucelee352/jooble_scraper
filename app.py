@@ -21,8 +21,21 @@ from jooble_data import (
     fetch_jobs,
 )
 
-# Single-series marker color (accessible mid-blue on light map tiles).
-MARKER_COLOR = "#2f6fd6"
+# Light indigo / black / silver theme.
+INDIGO = "#5661c9"          # accent: buttons, links, map marker
+INDIGO_DARK = "#434db3"     # hover/active
+INDIGO_TINT = "#e9ebfa"     # light indigo accent surfaces
+SILVER = "#c9ccd8"          # borders
+SILVER_SURFACE = "#f4f5f8"  # cards, modal, table header
+PAGE_BG = "#eef0f7"
+INK = "#111111"
+FONT_STACK = "'Sora', 'Segoe UI', system-ui, sans-serif"
+
+# Single-series marker color (indigo, on light map tiles).
+MARKER_COLOR = INDIGO
+
+REMOTE_LOCATION = "Remote, United States"
+MAX_DAYS = 14
 
 TABLE_COLUMNS = [
     {"name": "Title", "id": "title"},
@@ -44,17 +57,29 @@ def normalize_search(keywords, location):
     return keywords, location
 
 
+def clamp_days(days) -> int:
+    """Coerce the recency window to an int in [1, MAX_DAYS]."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, min(days, MAX_DAYS))
+
+
 def do_fetch(days: int, keywords: str | None = None,
-             location: str | None = None):
+             location: str | None = None, remote: bool = False):
     """Core fetch logic, kept as a plain function so it is testable.
 
     Returns (records, error_message): exactly one of the two is not None.
     `records` is a list of dicts ready for dcc.Store / DataTable.
     """
+    days = clamp_days(days)
     keywords, location = normalize_search(keywords, location)
+    if remote:
+        location = REMOTE_LOCATION
     try:
-        df = fetch_jobs(days=days, limit=100, keywords=keywords,
-                        location=location)
+        df = fetch_jobs(days=days, limit=None, keywords=keywords,
+                        location=location, strict=True)
     except JoobleApiError as exc:
         msg = str(exc)
         if exc.status_code in (None, 401, 403):
@@ -89,7 +114,9 @@ def build_map(df: pd.DataFrame) -> tuple[go.Figure, int]:
                 lon=mappable["lon"],
                 mode="markers",
                 marker={"size": 12, "color": MARKER_COLOR, "opacity": 0.85},
-                customdata=mappable[["title", "company", "location"]].values,
+                customdata=mappable[
+                    ["title", "company", "location", "id"]
+                ].values,
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "%{customdata[1]}<br>"
@@ -107,8 +134,87 @@ def build_map(df: pd.DataFrame) -> tuple[go.Figure, int]:
 
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "Jooble jobs"
+app.title = "Jooble Listings"
 server = app.server
+
+# Inline theme: light indigo / black / silver. The Google Font link (like
+# the Bootstrap CDN stylesheet) needs internet; the font stack and plain
+# CSS degrade gracefully without it.
+app.index_string = f"""<!DOCTYPE html>
+<html>
+    <head>
+        {{%metas%}}
+        <title>{{%title%}}</title>
+        {{%favicon%}}
+        {{%css%}}
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            body {{
+                background-color: {PAGE_BG};
+                color: {INK};
+                font-family: {FONT_STACK};
+            }}
+            h1, h2, h3, h4, h5, h6 {{
+                color: {INK};
+                font-family: {FONT_STACK};
+            }}
+            .app-title {{
+                font-size: 3.25rem;
+                font-weight: 700;
+                letter-spacing: -0.02em;
+                margin-bottom: 0;
+            }}
+            .author-line {{
+                color: #55596a;
+                margin-bottom: 0.25rem;
+            }}
+            .btn-primary {{
+                background-color: {INDIGO};
+                border-color: {INDIGO};
+            }}
+            .btn-primary:hover, .btn-primary:focus,
+            .btn-primary:active, .btn-primary.active {{
+                background-color: {INDIGO_DARK} !important;
+                border-color: {INDIGO_DARK} !important;
+            }}
+            .btn-outline-secondary {{
+                color: {INK};
+                border-color: {SILVER};
+                background-color: {SILVER_SURFACE};
+            }}
+            .modal-content {{
+                background-color: {SILVER_SURFACE};
+                border: 1px solid {SILVER};
+            }}
+            .card {{
+                background-color: {SILVER_SURFACE};
+                border-color: {SILVER};
+            }}
+            .form-control {{
+                border-color: {SILVER};
+            }}
+            .form-control:focus {{
+                border-color: {INDIGO};
+                box-shadow: 0 0 0 0.2rem {INDIGO_TINT};
+            }}
+            .alert-info {{
+                background-color: {INDIGO_TINT};
+                border-color: {SILVER};
+                color: {INK};
+            }}
+        </style>
+    </head>
+    <body>
+        {{%app_entry%}}
+        <footer>
+            {{%config%}}
+            {{%scripts%}}
+            {{%renderer%}}
+        </footer>
+    </body>
+</html>"""
 
 fetch_modal = dbc.Modal(
     [
@@ -127,16 +233,30 @@ fetch_modal = dbc.Modal(
                     id="location-input",
                     type="text",
                     value=DEFAULT_LOCATION,
-                    className="mb-3",
+                    className="mb-2",
                 ),
-                html.P("Pick the recency window (up to 100 jobs):"),
-                dbc.RadioItems(
-                    id="window-radio",
-                    options=[
-                        {"label": "Last 7 days", "value": 7},
-                        {"label": "Last 2 days", "value": 2},
-                    ],
+                dcc.Store(id="remote-store", data=False),
+                dbc.Button(
+                    "Remote", id="remote-toggle", n_clicks=0,
+                    color="secondary", outline=True, size="sm",
+                    className="mb-3",
+                    style={
+                    "marginTop": "10px"
+                    } 
+                ),
+                html.Br(),
+                dbc.Label(
+                    f"Recency window in days (1-{MAX_DAYS}, up to 100 jobs)",
+                    html_for="days-input",
+                ),
+                dcc.Input(
+                    id="days-input",
+                    type="number",
+                    min=1,
+                    max=MAX_DAYS,
+                    step=1,
                     value=7,
+                    className="form-control",
                 ),
                 dcc.Loading(
                     html.Div(id="fetch-status", className="mt-3"),
@@ -155,14 +275,38 @@ fetch_modal = dbc.Modal(
 app.layout = dbc.Container(
     [
         dcc.Store(id="jobs-store"),
-        html.H2("Jooble job listings", className="mt-3"),
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.H1("Jooble Listings", className="app-title"),
+                        html.H6("A live window into the job market, one fetch at a time.", className="sub-title"),
+                        html.Hr(),
+                        html.Br(),
+                    ]
+                )
+            ],
+            className="d-flex align-items-center mt-3",
+        ),
         dbc.Button(
-            "Fetch jobs", id="open-fetch", color="primary",
-            className="my-2", n_clicks=0,
+            "Fetch Jobs", id="open-fetch", color="primary",
+            className="my-2", 
+            n_clicks=0, 
+            style={"marginRight": "15px"}
+        ),
+        dbc.Button(
+            "Home", href="https://brucea-lee.com",
+            external_link=True, color="primary",
+            className="ms-auto",
         ),
         fetch_modal,
-        html.Div(id="active-search", className="my-2 text-muted"),
+        html.Div(id="active-search", className="mt-2 text-muted",
+                 style={"marginTop": "2.5rem", "marginBottom": "2.5rem"}),
         html.Div(id="empty-state", className="my-2"),
+        html.H4("Map", className="mt-2", style={"marginTop": "20px", "marginBottom": "5px"}),
+        html.Div(id="unmapped-note", className="mb-2 text-muted"),
+        dcc.Graph(id="jobs-map", style={"height": "50vh"}),
+        html.H4("Listings", className="mt-4", style={"marginTop": "20px", "marginBottom": "20px"}),
         dash_table.DataTable(
             id="jobs-table",
             columns=TABLE_COLUMNS,
@@ -173,17 +317,41 @@ app.layout = dbc.Container(
             row_selectable="single",
             tooltip_duration=None,
             style_table={"overflowX": "auto"},
+            style_header={
+                "backgroundColor": SILVER_SURFACE,
+                "borderColor": SILVER,
+                "color": INK,
+                "fontWeight": "600",
+            },
             style_cell={
                 "textAlign": "left",
                 "maxWidth": "260px",
                 "overflow": "hidden",
                 "textOverflow": "ellipsis",
+                "backgroundColor": "#ffffff",
+                "borderColor": SILVER,
+                "color": INK,
+                "fontFamily": FONT_STACK,
             },
+            style_data_conditional=[
+                {
+                    "if": {"state": "selected"},
+                    "backgroundColor": INDIGO_TINT,
+                    "border": f"1px solid {INDIGO}",
+                }
+            ],
         ),
         html.Div(id="snippet-pane", className="my-2"),
-        html.H4("Map", className="mt-4"),
-        html.Div(id="unmapped-note", className="mb-2 text-muted"),
-        dcc.Graph(id="jobs-map", style={"height": "60vh"}),
+        html.Footer(
+        "Bruce A. Lee © 2026, All Rights Reserved.",
+        style={
+            "textAlign": "center",
+            "padding": "10px",
+            "position": "relative",
+            "width": "100%",
+            "bottom": "0"
+        }
+    )
     ],
     fluid=True,
 )
@@ -200,27 +368,50 @@ def open_modal(_n, is_open):
 
 
 @app.callback(
+    Output("remote-store", "data"),
+    Output("remote-toggle", "outline"),
+    Output("remote-toggle", "color"),
+    Output("location-input", "disabled"),
+    Input("remote-toggle", "n_clicks"),
+    State("remote-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_remote(_n, active):
+    active = not bool(active)
+    return (
+        active,
+        not active,                          # solid button when active
+        "primary" if active else "secondary",
+        active,                              # grey out Location when remote
+    )
+
+
+@app.callback(
     Output("jobs-store", "data"),
     Output("fetch-status", "children"),
     Output("fetch-modal", "is_open", allow_duplicate=True),
     Output("active-search", "children"),
     Input("do-fetch", "n_clicks"),
-    State("window-radio", "value"),
+    State("days-input", "value"),
     State("keywords-input", "value"),
     State("location-input", "value"),
+    State("remote-store", "data"),
     prevent_initial_call=True,
 )
-def run_fetch(_n, days, keywords, location):
-    records, error = do_fetch(int(days), keywords, location)
+def run_fetch(_n, days, keywords, location, remote):
+    remote = bool(remote)
+    records, error = do_fetch(days, keywords, location, remote=remote)
     if error is not None:
         return no_update, dbc.Alert(error, color="danger"), True, no_update
     keywords, location = normalize_search(keywords, location)
+    if remote:
+        location = REMOTE_LOCATION
     return (
         records,
         dbc.Alert(f"Fetched {len(records)} jobs.", color="success"),
         False,
         f'Showing results for "{keywords}" in "{location}" '
-        f"(last {int(days)} days).",
+        f"in the last {clamp_days(days)} days.",
     )
 
 
@@ -234,7 +425,7 @@ def run_fetch(_n, days, keywords, location):
 )
 def render(records):
     if not records:
-        msg = "No data loaded yet. Click \"Fetch jobs\" to pull listings."
+        msg = "Click \"Fetch jobs\" to pull listings."
         if not os.environ.get("KEY"):
             msg += (
                 " Note: the KEY environment variable is not set - set it "
@@ -259,17 +450,48 @@ def render(records):
 
 
 @app.callback(
+    Output("jobs-table", "selected_rows"),
+    Input("jobs-map", "clickData"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def select_from_map(click_data, data):
+    """Clicking a map point selects that job's row in the table.
+
+    Matches on job id carried in the marker customdata, against the
+    table's underlying `data` order — so it works regardless of the
+    table's current filter/sort (which only reshuffle the derived view).
+    """
+    if not click_data or not data:
+        return no_update
+    try:
+        job_id = click_data["points"][0]["customdata"][3]
+    except (KeyError, IndexError, TypeError):
+        return no_update
+    for i, row in enumerate(data):
+        if row.get("id") == job_id:
+            return [i]
+    return no_update
+
+
+@app.callback(
     Output("snippet-pane", "children"),
     Input("jobs-table", "derived_virtual_selected_rows"),
     Input("jobs-table", "derived_virtual_data"),
+    Input("jobs-table", "selected_rows"),
+    State("jobs-table", "data"),
 )
-def show_snippet(selected_rows, rows):
-    if not selected_rows or not rows:
+def show_snippet(dv_selected, dv_rows, selected, data):
+    # Prefer the derived view (respects the current filter/sort); fall
+    # back to the raw selection so a map-click still shows the detail
+    # card even when the row is filtered out of the visible table.
+    row = None
+    if dv_selected and dv_rows and dv_selected[0] < len(dv_rows):
+        row = dv_rows[dv_selected[0]]
+    elif selected and data and selected[0] < len(data):
+        row = data[selected[0]]
+    if row is None:
         return None
-    idx = selected_rows[0]
-    if idx >= len(rows):
-        return None
-    row = rows[idx]
     return dbc.Card(
         dbc.CardBody(
             [
@@ -283,5 +505,9 @@ def show_snippet(selected_rows, rows):
     )
 
 
+# if __name__ == "__main__":
+#     app.run(debug=False, host="127.0.0.1", port=8050)
+
 if __name__ == "__main__":
-    app.run(debug=False, host="127.0.0.1", port=8050)
+    app.run(debug=True, host="127.0.0.1", port=8050, use_reloader=True)
+    

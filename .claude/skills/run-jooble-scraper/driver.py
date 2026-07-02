@@ -135,23 +135,41 @@ def run_module_smoke():
         return (now - timedelta(days=days_ago)).strftime(
             "%Y-%m-%dT%H:%M:%S.0000000")
 
-    jobs = [
-        {"id": -7000123456789012345, "title": "Data Engineer",
-         "company": "Acme Analytics", "location": "Austin, TX",
-         "salary": "$120k - $150k", "type": "Full-time",
-         "snippet": "Pipelines.", "link": "https://jooble.org/jdp/1",
-         "updated": iso(1), "source": "example.com"},
-        {"id": 8000987654321098765, "title": "Analytics Engineer",
-         "company": "Globex Corp", "location": "Remote, United States",
-         "salary": "", "type": "Contract",
-         "snippet": "dbt + Snowflake.", "link": "https://jooble.org/jdp/2",
-         "updated": iso(3), "source": "jobs.example.org"},
-        {"id": 12345, "title": "Stale Engineer",
-         "company": "Oldco", "location": "Cheyenne, Wyoming",
-         "salary": "", "type": "Full-time",
-         "snippet": "Too old.", "link": "https://jooble.org/jdp/3",
-         "updated": iso(10), "source": "old.example.com"},
-    ]
+    job_a = {  # fresh, matches keywords, duplicated on page 2
+        "id": -7000123456789012345, "title": "Data Engineer",
+        "company": "Acme Analytics", "location": "Austin, TX",
+        "salary": "$120k - $150k", "type": "Full-time",
+        "snippet": "Pipelines.", "link": "https://jooble.org/jdp/1",
+        "updated": iso(1), "source": "example.com"}
+    job_b = {  # fresh (3 days), matches keywords
+        "id": 8000987654321098765, "title": "Analytics Engineer",
+        "company": "Globex Corp", "location": "Remote, United States",
+        "salary": "", "type": "Contract",
+        "snippet": "dbt + Snowflake.", "link": "https://jooble.org/jdp/2",
+        "updated": iso(3), "source": "jobs.example.org"}
+    job_stale = {  # older than 7 days -> always dropped
+        "id": 12345, "title": "Stale Engineer",
+        "company": "Oldco", "location": "Cheyenne, Wyoming",
+        "salary": "", "type": "Full-time",
+        "snippet": "Too old.", "link": "https://jooble.org/jdp/3",
+        "updated": iso(10), "source": "old.example.com"}
+    job_fuzzy = {  # fresh, but no keyword phrase in title/snippet
+        "id": 999, "title": "Software Developer",
+        "company": "Fuzzco", "location": "Denver, CO",
+        "salary": "", "type": "Full-time",
+        "snippet": "Java microservices.", "link": "https://jooble.org/jdp/4",
+        "updated": iso(1), "source": "fuzz.example.com"}
+    job_e = {  # fresh, matches via "data engineer" substring in title
+        "id": 111, "title": "Senior Data Engineer",
+        "company": "Plains Data", "location": "Cheyenne, Wyoming",
+        "salary": "", "type": "Full-time",
+        "snippet": "Airflow.", "link": "https://jooble.org/jdp/5",
+        "updated": iso(1), "source": "plains.example.com"}
+
+    pages = {
+        1: [job_a, job_b, job_stale, job_fuzzy],
+        2: [job_a, job_e],  # job_a repeated -> must be deduped by id
+    }
 
     class FakeResp:
         def __init__(self, payload, status=200):
@@ -163,19 +181,21 @@ def run_module_smoke():
 
     def fake_post(url, **kw):
         page = int(kw["json"]["page"])
-        # two pages of results, then the API runs dry
-        payload = {"totalCount": 6, "jobs": jobs if page <= 2 else []}
-        return FakeResp(payload)
+        return FakeResp({"totalCount": 6, "jobs": pages.get(page, [])})
 
     kwargs = dict(max_retries=0, retry_wait=0.0)
 
     with mock.patch.dict(os.environ, {"KEY": "fake-key-for-mock-run"}), \
             mock.patch.object(requests, "post", fake_post):
-        df = jooble_data.fetch_jobs(days=7, **kwargs)
+        # limit is a cap, not padding: 4 matches << limit=50 -> 4 rows
+        # (a, b, fuzzy, e; stale dropped by days, duplicate a deduped)
+        df = jooble_data.fetch_jobs(days=7, limit=50, **kwargs)
         if list(df.columns) != jooble_data.COLUMNS:
             return f"unexpected columns: {list(df.columns)}"
-        if len(df) != 4:  # 2 fresh jobs per page x 2 pages; stale one dropped
-            return f"days=7 expected 4 rows, got {len(df)}"
+        if len(df) != 4:
+            return f"days=7 limit=50 expected 4 rows (cap, not padding), got {len(df)}"
+        if df["id"].duplicated().any():
+            return "duplicate ids across pages were not deduped"
         if not str(df["updated"].dtype).startswith("datetime64"):
             return f"'updated' dtype is {df['updated'].dtype}, not datetime64"
         neg = df.loc[df["title"] == "Data Engineer", "id"].iloc[0]
@@ -188,13 +208,26 @@ def run_module_smoke():
         if not (math.isnan(remote["lat"]) and math.isnan(remote["lon"])):
             return f"ungeocodable row got coords ({remote['lat']}, {remote['lon']})"
 
-        df2 = jooble_data.fetch_jobs(days=2, **kwargs)
-        if len(df2) != 2:  # only the 1-day-old job, once per page
-            return f"days=2 expected 2 rows, got {len(df2)}"
+        # limit=None -> uncapped, returns every match
+        df_all = jooble_data.fetch_jobs(days=7, limit=None, **kwargs)
+        if len(df_all) != 4:
+            return f"limit=None expected all 4 matches, got {len(df_all)}"
 
+        # limit smaller than match count -> hard cap
         df3 = jooble_data.fetch_jobs(days=7, limit=3, **kwargs)
         if len(df3) != 3:
             return f"limit=3 expected 3 rows, got {len(df3)}"
+
+        # days=2 -> only the 1-day-old jobs (a, fuzzy, e)
+        df2 = jooble_data.fetch_jobs(days=2, **kwargs)
+        if len(df2) != 3:
+            return f"days=2 expected 3 rows, got {len(df2)}"
+
+        # strict=True -> drop the job whose title/snippet lacks the keywords
+        df_strict = jooble_data.fetch_jobs(days=7, strict=True, **kwargs)
+        if len(df_strict) != 3 or "999" in set(df_strict["id"]):
+            return (f"strict=True expected 3 rows without id 999, got "
+                    f"{len(df_strict)} rows, ids {sorted(df_strict['id'])}")
 
     # 403 must raise JoobleApiError with status_code
     with mock.patch.dict(os.environ, {"KEY": "bad-key"}), \
@@ -213,8 +246,9 @@ def run_module_smoke():
     if abs(lat - 42.9957) > 0.01:
         return f"state-name fallback failed: {(lat, lon)}"
 
-    print("PASS: jooble_data.fetch_jobs — columns, days filter, limit, "
-          "id sign, geocoding, and 403 -> JoobleApiError all OK")
+    print("PASS: jooble_data.fetch_jobs — columns, days filter, limit cap / "
+          "limit=None, strict keyword filter, id dedupe, id sign, geocoding, "
+          "and 403 -> JoobleApiError all OK")
     return None
 
 
