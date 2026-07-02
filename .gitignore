@@ -1,0 +1,5 @@
+venv/
+Documents/
+*.env
+!example.env
+__pycache__/
