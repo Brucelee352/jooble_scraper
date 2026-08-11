@@ -56,7 +56,7 @@ Behavior:
   wins), regardless of `strict`.
 - Jobs with an unparseable `updated` timestamp are dropped.
 - May return fewer than `limit` rows (including 0 — the empty DataFrame
-  still has all 12 columns with the dtypes below).
+  still has all 16 columns with the dtypes below).
 - Worst-case latency ≈ `max_pages * (max_retries + 1) * (timeout + retry_wait)`
   with defaults; pass `max_retries=0`/smaller `timeout` for snappier failure.
 
@@ -64,20 +64,30 @@ Behavior:
 
 Columns, in this exact order (also exported as `jooble_data.COLUMNS`):
 
-| column   | dtype           | notes |
-|----------|-----------------|-------|
-| id       | object (str)    | Jooble job id as a string; leading `-` preserved (ids can be negative). |
-| title    | object (str)    | |
-| company  | object (str)    | may be `""` |
-| location | object (str)    | raw Jooble location string, e.g. `"Austin, TX"`, `"Remote, United States"` |
-| salary   | object (str)    | may be `""` |
-| job_type | object (str)    | Jooble's `type` field, e.g. `"Full-time"` |
-| snippet  | object (str)    | may contain HTML tags like `<b>` |
-| link     | object (str)    | job posting URL |
-| updated  | datetime64[ns]  | tz-naive |
-| source   | object (str)    | |
-| lat      | float64         | NaN when the location can't be geocoded |
-| lon      | float64         | NaN when the location can't be geocoded |
+| column       | dtype           | notes |
+|--------------|-----------------|-------|
+| id           | object (str)    | Jooble job id as a string; leading `-` preserved (ids can be negative). |
+| title        | object (str)    | |
+| company      | object (str)    | may be `""` |
+| location     | object (str)    | raw Jooble location string, e.g. `"Austin, TX"`, `"Remote, United States"` |
+| salary       | object (str)    | raw Jooble salary text; may be `""` |
+| salary_value | float64         | best-effort estimated **annual USD** parsed from `salary` (ranges → midpoint; hourly/weekly/monthly annualized; out-of-band values rejected). `NaN`/`None` when blank or unparseable. |
+| job_type     | object (str)    | Jooble's `type` field, e.g. `"Full-time"`; may be `""` |
+| seniority    | object          | parsed level (`"Intern"`, `"Junior"`, `"Mid"`, `"Senior"`, `"Lead"`, `"Staff"`, `"Principal"`) or `None`. |
+| min_years    | float64         | minimum years of experience mentioned (integer-valued), or `NaN`/`None` when not stated. |
+| skills       | object          | `list[str]` of matched skill keywords in canonical spelling; `[]` when none matched. |
+| snippet      | object (str)    | may contain HTML tags like `<b>` |
+| link         | object (str)    | job posting URL |
+| updated      | datetime64[ns]  | tz-naive |
+| source       | object (str)    | |
+| lat          | float64         | NaN when the location can't be geocoded |
+| lon          | float64         | NaN when the location can't be geocoded |
+
+The four parsed columns — `salary_value`, `seniority`, `min_years`, `skills` —
+are best-effort textual analysis of a **truncated** title/snippet, so they are
+frequently absent (`NaN` / `None` / `[]`). The public helpers behind them are
+also importable: `parse_salary(text)`, `parse_seniority(title, snippet)`,
+`parse_min_years(title, snippet)`, and `extract_skills(text, vocab=None)`.
 
 Geocoding is **offline only**: a bundled `"City, ST"` lookup (~60 major US
 cities) with a fallback to US state centroids parsed from the location

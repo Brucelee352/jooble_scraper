@@ -1,0 +1,33 @@
+# Controls what `gcloud run deploy --source .` (and `gcloud builds submit`)
+# uploads to Cloud Build. If this file is absent, gcloud instead derives the
+# ignore list from .gitignore — this file takes over that job explicitly.
+#
+# NOTE: do NOT list Dockerfile, .dockerignore, requirements.txt, or the *.py
+# sources here — Cloud Build needs them in the uploaded context to build the
+# image. The Docker build step still honors .dockerignore on top of this.
+
+# Version control
+.git/
+.gitignore
+
+# Local Python environments / caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets and local env files (never upload these)
+.env
+.env.*
+
+# Editor / tooling / assistant files
+.claude/
+.vscode/
+.idea/
+scratchpad/
+
+# Docs, tests, and logs not needed to build or run the container
+*.md
+tests/
+*.log
