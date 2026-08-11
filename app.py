@@ -53,7 +53,7 @@ TABLE_COLUMNS = [
     {"name": "Location", "id": "location"},
     {"name": "Salary", "id": "salary"},
     {"name": "Job Type", "id": "job_type"},
-    {"name": "Senority", "id": "seniority"},
+    {"name": "Seniority", "id": "seniority"},
     {"name": "Min Yrs Exp", "id": "min_years"},
     {"name": "Skills", "id": "skills_str"},
     {"name": "Last Updated", "id": "updated"},
