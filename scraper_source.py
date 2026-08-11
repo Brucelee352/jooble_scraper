@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 
-load_dotenv("jooble_scraper/jooble_scraper.env")
+load_dotenv()  # picks up a ./.env if present; the KEY env var still wins
 
 
 # List needed to append, in order to store processed data 

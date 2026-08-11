@@ -1,0 +1,17 @@
+# Keep the build context small and never bake local/secret files into the image.
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+.env.*
+*.log
+.claude/
+.vscode/
+.idea/
+scratchpad/
+*.md
+tests/
