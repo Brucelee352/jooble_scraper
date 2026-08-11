@@ -391,6 +391,17 @@ def _resolve_api_key(api_key: str | None) -> str:
     return key
 
 
+def _redact(text: object, secret: str) -> str:
+    """Strip the API key from a string before it reaches a user or a log.
+
+    Jooble embeds the key in the request URL path, so a network-error message
+    (e.g. from requests, which echoes the failing URL) can otherwise leak the
+    key verbatim into error messages and Cloud Logging.
+    """
+    text = str(text)
+    return text.replace(secret, "***") if secret else text
+
+
 def _fetch_page(url: str, params: dict, timeout: float,
                 max_retries: int, retry_wait: float) -> dict:
     """POST one page to the Jooble API with bounded retry/backoff.
@@ -399,13 +410,16 @@ def _fetch_page(url: str, params: dict, timeout: float,
     seconds between attempts) on HTTP 429 and network errors. Raises
     JoobleApiError on 403, other non-200 statuses, or exhausted retries.
     """
+    # The key is the last path segment of the URL; redact it from any error
+    # text so it never surfaces to the user or logs.
+    secret = url.rsplit("/", 1)[-1]
     last_error: str = "unknown error"
     for attempt in range(max_retries + 1):
         try:
             response = requests.post(url, timeout=timeout,
                                      headers=HEADERS, json=params)
         except requests.exceptions.RequestException as exc:
-            last_error = f"network error: {exc}"
+            last_error = f"network error: {_redact(exc, secret)}"
         else:
             if response.status_code == 200:
                 return response.json()
