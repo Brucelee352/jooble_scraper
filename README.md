@@ -9,7 +9,7 @@ A program to scour Jooble.org for job listings — and now a full Plotly Dash we
 
 ## Introduction
 
-This was born out of a desire to share my projects with the public. I've been upskilling and looking for work for the last couple of years, and I figured that — in addition to scratching my own itch — this might help my friends cut through some of the noise in the current labor market.
+This was born out of a desire to share my projects with the public. I've been upskilling and looking for work for the last couple of years, and I figured that — in addition to scratching my own itch, this might help my friends cut through some of the noise in the current labor market.
 
 What started as a single script has grown quite a bit. There are now three pieces:
 
@@ -31,18 +31,18 @@ What you get after a fetch:
 - **Five insight charts** — Top companies, Postings per day, Jobs by state, Top skills mentioned, and a **Median salary by state** bubble chart (bubble size scales with how many salaried jobs back that state's figure).
 - **Listings table** — sortable and filterable, paginated 15 rows at a time, with columns for Job Title, Company, Location, Salary, Job Type, Seniority, Min Yrs Exp, Skills, Last Updated, and a clickable link. Select a row (or click a map marker) to see the job's snippet in a detail card.
 
-Listings that can't be pinned to a location (remote roles, mostly) stay in the table but sit the map out. The app starts up fine without an API key — it'll just remind you to set one before it can fetch anything.
+Listings that can't be pinned to a location (remote roles, mostly) stay in the table but sit the map out. The app starts up fine without an API key, it'll just remind you to set one before it can fetch anything.
 
 ### About the extra columns
 
 The data layer pulls a bit of extra signal out of each listing with the parsers in `jooble_data.py`:
 
-- `parse_seniority` — a best-effort level (Intern / Junior / Mid / Senior / Lead / Staff / Principal) from the title, falling back to the snippet.
+- `parse_seniority` — a best-effort level (Intern / Junior / Mid / Senior / Lead / Staff / Principal) from the title.
 - `parse_min_years` — the minimum years of experience mentioned (e.g. "5+ years").
 - `extract_skills` — matches a built-in vocabulary of ~35 tools/languages (Python, SQL, dbt, Airflow, Snowflake, AWS, …).
 - `parse_salary` — normalizes Jooble's messy free-text salary ("$90k–$120k", "$45/hr", "$8,000 per month") into an estimated annual USD figure, exposed as the `salary_value` column that powers the salary bubble chart.
 
-Be honest with yourself about these: Jooble only gives a truncated snippet per listing, so all of the above are best-effort and can be sparse or empty. Unknowns come back as `None` / `[]`.
+Note: Jooble only gives a truncated snippet per listing, so all of the above are best-effort and can be sparse or empty. Unknowns come back as `None` / `[]`.
 
 ## Getting started
 
@@ -143,7 +143,7 @@ gcloud run deploy jooble-scraper \
 
 A few things worth knowing:
 
-- **`--source .` uploads the current directory (respecting `.gcloudignore`) to Cloud Build.** It builds from the local files on disk, *not* from GitHub — so run it from the repo root where the `Dockerfile` lives, or pass `--source <path>`.
+- **`--source .` uploads the current directory (respecting `.gcloudignore`) to Cloud Build.** It builds from the local files on disk, *not* from GitHub, so run it from the repo root where the `Dockerfile` lives, or pass `--source <path>`.
 - **A simpler but less secure alternative to steps 2–3** is to skip Secret Manager and pass the key directly: `--set-env-vars KEY=YOUR_JOOBLE_KEY`. It works, but the key ends up in the service config in plaintext.
 - **`.env` is excluded from both the image and the upload** (via `.dockerignore` and `.gcloudignore`), which is why the key has to be injected at runtime rather than baked in.
 - **Seeing OOM?** Bump `--memory 1Gi`.
