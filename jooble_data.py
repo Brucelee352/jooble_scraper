@@ -376,13 +376,32 @@ def parse_salary(text: str | None) -> float | None:
 # Fetching
 # ---------------------------------------------------------------------------
 
+def _clean_key(key: str | None) -> str | None:
+    """Normalize a raw key value down to just the key.
+
+    Guards against common misconfigurations where the value picked up from an
+    env var or secret carries extra characters: surrounding whitespace/quotes
+    or a trailing newline, or an accidental ``KEY=`` / ``key=`` prefix (e.g. a
+    whole ``.env`` line stored as the secret value). Jooble keys don't contain
+    ``=``, so the prefix strip only fires when the text before ``=`` is exactly
+    ``key``. Falsy input is returned as-is.
+    """
+    if not key:
+        return key
+    key = key.strip().strip("\"'").strip()
+    head, sep, tail = key.partition("=")
+    if sep and head.strip().lower() == "key":
+        key = tail.strip().strip("\"'").strip()
+    return key
+
+
 def _resolve_api_key(api_key: str | None) -> str:
     if api_key:
-        return api_key
-    key = os.environ.get("KEY")
+        return _clean_key(api_key)
+    key = _clean_key(os.environ.get("KEY"))
     if not key and load_dotenv is not None:
         load_dotenv()  # picks up ./.env if present; env vars still win
-        key = os.environ.get("KEY")
+        key = _clean_key(os.environ.get("KEY"))
     if not key:
         raise JoobleApiError(
             "Missing Jooble API key: set the KEY environment variable "
