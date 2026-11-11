@@ -158,6 +158,60 @@ docker run -e KEY=YOUR_JOOBLE_KEY -e PORT=8080 -p 8080:8080 jooble
 
 Then open http://127.0.0.1:8080.
 
+## Email alerts
+
+The **Fetch Jobs** dialog has an *Email alerts* section. **Schedule email** saves the dialog's current search (keywords, location, recency window) together with a recipient and a cadence (daily or weekly). From then on, each email lists only the jobs that weren't in an earlier one, and nothing is sent when there's nothing new. **Send now** runs it immediately, and **Stop alerts** clears the schedule. The logic lives in `alerts.py`.
+
+Mail goes out through **Gmail SMTP**, optionally *from* an address on your own domain:
+
+1. **Make the alias able to receive mail.** Set up forwarding for e.g. `jobs@yourdomain.com` to your Gmail (Cloudflare Email Routing, ImprovMX, or your registrar's forwarding). Gmail sends a confirmation code to that address.
+2. **Verify it in Gmail:** Settings → Accounts and Import → *Send mail as* → Add another email address, with "Treat as an alias" ticked.
+3. **Add an SPF record** to the domain that includes Google, e.g. `v=spf1 include:_spf.google.com ~all`, merged with whatever your forwarding service needs. Avoid a strict DMARC policy (`p=quarantine` or `p=reject`): Gmail can't sign mail as your domain, so those emails would get filtered.
+4. **Create a Gmail App Password** (requires 2-Step Verification): Google Account → Security → App passwords.
+
+| Variable | What it is |
+|---|---|
+| `SMTP_USER` | Gmail address that logs in to SMTP |
+| `SMTP_APP_PASSWORD` | The App Password from step 4 |
+| `ALERT_FROM` | The verified alias, e.g. `jobs@yourdomain.com` (defaults to `SMTP_USER`) |
+| `ALERT_TO` | Comma-separated allowlist of recipients the UI may schedule (defaults to `SMTP_USER`). The app is public, so this stops anyone from using it to email arbitrary addresses. |
+| `ALERT_STORE` | Where the schedule is saved: `gs://bucket/path.json` on Cloud Run (container disk doesn't persist), or a local file (default `.alerts/schedule.json`) |
+| `TASK_TOKEN` | Shared secret the scheduler must send in the `X-Task-Token` header |
+
+Locally, put these in `.env` (see `example.env`) and press **Send now** to test.
+
+**The timer is Cloud Scheduler.** Cloud Run shuts idle containers down, so the app can't keep its own clock. Instead, Cloud Scheduler POSTs to `/tasks/send-digest` every hour, and the app sends only when the saved cadence is due:
+
+```bash
+# Bucket for the schedule, readable/writable by the Cloud Run service account
+gcloud storage buckets create gs://YOUR_BUCKET --location=us-central1
+gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+
+# Secrets (grant secretAccessor on each, as for jooble-key above)
+printf "YOUR_APP_PASSWORD" | gcloud secrets create smtp-app-password --data-file=-
+TASK_TOKEN=$(openssl rand -hex 24)
+printf "$TASK_TOKEN" | gcloud secrets create task-token --data-file=-
+
+# Redeploy with the alert settings
+gcloud run deploy jooble-scraper --source . \
+  --set-secrets KEY=jooble-key:latest,SMTP_APP_PASSWORD=smtp-app-password:latest,TASK_TOKEN=task-token:latest \
+  --set-env-vars SMTP_USER=you@gmail.com,ALERT_FROM=jobs@yourdomain.com,ALERT_TO=you@gmail.com,ALERT_STORE=gs://YOUR_BUCKET/alerts/schedule.json
+
+# Hourly trigger
+gcloud services enable cloudscheduler.googleapis.com
+SERVICE_URL=$(gcloud run services describe jooble-scraper --format='value(status.url)')
+gcloud scheduler jobs create http jooble-digest --location=us-central1 \
+  --schedule="0 * * * *" --http-method=POST \
+  --uri="${SERVICE_URL}/tasks/send-digest" \
+  --headers="X-Task-Token=${TASK_TOKEN}"
+```
+
+Daily emails therefore go out about 24 hours after the previous one, on the hour. Note that anyone who can open the app can also change or stop the schedule. Recipients are still limited to `ALERT_TO`.
+
+Tests for the alerts (no network; SMTP and the API are mocked): `python -m unittest discover -s tests`.
+
 ## For the curious
 
 There's a smoke-test harness under `.claude/skills/run-jooble-scraper/` that exercises everything against a **mocked** API — no key needed. Handy if you want to poke at the code without burning requests:
@@ -171,7 +225,7 @@ The data layer's contract lives in `INTERFACE.md` if you want to build something
 
 ## To-Dos
 
-1. Send the output `.csv` as an email to yourself or others.
+1. Attach the results as a `.csv` to the alert emails (scheduled HTML alerts are done; see [Email alerts](#email-alerts)).
 2. Offer an `.xlsx` export for further manipulation in Excel.
 3. Smarter geocoding — right now the map works off a built-in list of ~60 major cities plus state centroids, so smaller towns land on their state's center.
 

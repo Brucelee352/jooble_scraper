@@ -20,6 +20,7 @@ __pycache__/
 # Secrets and local env files (never upload these)
 .env
 .env.*
+.alerts/
 
 # Editor / tooling / assistant files
 .claude/
