@@ -4,7 +4,7 @@ Fetch dialog -> jooble_data.fetch_jobs -> DataTable + map. No network calls
 happen at import time or on page load; fetches only run from the modal's
 button callback. Run with:
 
-    uv run app.py        (or: .venv/Scripts/python app.py)
+    uv run app.py or: (.venv/Scripts/python app.py)
 """
 
 import os
@@ -653,7 +653,7 @@ app.layout = dmc.MantineProvider(
     forceColorScheme="light",
     children=dbc.Container(
         [
-            dcc.Store(id="jobs-store"),
+            dcc.Store(id="jobs-store"), dcc.Location(id="url")
             # Title card: title/subtitle left, action buttons right.
             dmc_card(
                 dmc.Group(
@@ -867,6 +867,23 @@ def run_fetch(_n, days, keywords, location, remote):
         f"in the last {clamp_days(days)} days.",
     )
 
+DEFAULT_DAYS = 7
+
+@app.callback(
+    Output("jobs-store", "data", allow_duplicate=True),
+    Output("active-search", "children", allow_duplicate=True),
+    Input("url", "pathname"),
+    prevent_initial_call="initial_duplicate",
+)
+def initial_fetch(_pathname):
+    """Fetch the default search as soon as the page loads."""
+    records, error = do_fetch(DEFAULT_DAYS, DEFAULT_KEYWORDS, DEFAULT_LOCATION)
+    if error is not None:
+        return no_update, dbc.Alert(error, color="warning")
+    return records, (
+        f'Showing results for "{DEFAULT_KEYWORDS}" in "{DEFAULT_LOCATION}" '
+        f"in the last {DEFAULT_DAYS} days."
+    )
 
 @app.callback(
     Output("state-filter", "data"),
