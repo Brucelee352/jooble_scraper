@@ -22,11 +22,12 @@ from __future__ import annotations
 import os
 import re
 import time
-import html as html
+import html
 from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
+
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 try:  # optional convenience: pick up a local .env if one exists
     from dotenv import load_dotenv
@@ -180,9 +181,12 @@ _CITY_COORDS = {
 }
 
 def clean_snippet(raw: str | None) -> str:
+    """Plain text from a Jooble snippet: strips HTML tags (e.g. the ``<b>``
+    keyword highlights), drops any <script>/<style> content, decodes
+    entities such as ``&nbsp;`` and collapses whitespace."""
     if not raw:
         return ""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(raw, "html.parser")
     for tag in soup(["script", "style"]):
         tag.decompose()
     text = soup.get_text(" ", strip=True)
