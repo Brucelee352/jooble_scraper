@@ -24,22 +24,22 @@ import re
 import time
 import html
 from datetime import datetime, timedelta
-
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-try:  # optional convenience: pick up a local .env if one exists
+try:  # Pick up a local .env if one exists
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover
+    load_dotenv()  # Doesn't override variables already set in the environment
+except ImportError:  
     load_dotenv = None
 
 JOOBLE_URL_TEMPLATE = "https://jooble.org/api/{key}"
 HEADERS = {"Content-type": "application/json"}
 
-DEFAULT_KEYWORDS = "data engineer, analytics engineer"
+DEFAULT_KEYWORDS = "data analyst"
 DEFAULT_LOCATION = "United States"
-DEFAULT_RADIUS = 500
+DEFAULT_RADIUS = 50
 
 #: Column order of the DataFrame returned by :func:`fetch_jobs`.
 COLUMNS = [

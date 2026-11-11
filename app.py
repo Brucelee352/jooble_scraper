@@ -1,8 +1,10 @@
 """Dash UI for jooble_scraper.
 
 Fetch dialog -> jooble_data.fetch_jobs -> DataTable + map. No network calls
-happen at import time or on page load; fetches only run from the modal's
-button callback. Run with:
+happen at import time. Each page load runs one fetch of the default search
+(initial_fetch: DEFAULT_KEYWORDS / DEFAULT_LOCATION / DEFAULT_DAYS) so the
+dashboard opens populated; further fetches run from the Fetch dialog.
+Run with:
 
     uv run app.py        (or: .venv/Scripts/python app.py)
 """
@@ -46,6 +48,7 @@ MARKER_COLOR = INDIGO
 
 REMOTE_LOCATION = "Remote" 
 MAX_DAYS = 21
+DEFAULT_DAYS = 7  # recency window for the on-load fetch and the Fetch dialog
 
 TABLE_COLUMNS = [
     {"name": "Job Title", "id": "title"},
@@ -581,7 +584,7 @@ fetch_modal = dbc.Modal(
                     min=1,
                     max=MAX_DAYS,
                     step=1,
-                    value=7,
+                    value=DEFAULT_DAYS,
                     className="form-control",
                 ),
                 dcc.Loading(
@@ -654,6 +657,9 @@ app.layout = dmc.MantineProvider(
     children=dbc.Container(
         [
             dcc.Store(id="jobs-store"),
+            # Its pathname is set on every page load, which fires
+            # initial_fetch to populate the dashboard with the default search.
+            dcc.Location(id="url"),
             # Title card: title/subtitle left, action buttons right.
             dmc_card(
                 dmc.Group(
@@ -710,8 +716,13 @@ app.layout = dmc.MantineProvider(
                                     allowDeselect=False,
                                     className="mb-3",
                                 ),
-                                html.Div(id="active-search",
-                                         className="text-muted mb-3"),
+                                # Spinner while a fetch (incl. the on-load
+                                # one) is running; both write active-search.
+                                dcc.Loading(
+                                    html.Div(id="active-search",
+                                             className="text-muted mb-3"),
+                                    type="dot",
+                                ),
                                 html.Div(id="unmapped-note",
                                          className="text-muted mb-3"),
                                 html.Div(id="empty-state"),
@@ -865,6 +876,23 @@ def run_fetch(_n, days, keywords, location, remote):
         False,
         f'Showing results for "{keywords}" in "{location}" '
         f"in the last {clamp_days(days)} days.",
+    )
+
+
+@app.callback(
+    Output("jobs-store", "data", allow_duplicate=True),
+    Output("active-search", "children", allow_duplicate=True),
+    Input("url", "pathname"),
+    prevent_initial_call="initial_duplicate",
+)
+def initial_fetch(_pathname):
+    """Fetch the default search as soon as the page loads."""
+    records, error = do_fetch(DEFAULT_DAYS, DEFAULT_KEYWORDS, DEFAULT_LOCATION)
+    if error is not None:
+        return no_update, dbc.Alert(error, color="warning")
+    return records, (
+        f'Showing results for "{DEFAULT_KEYWORDS}" in "{DEFAULT_LOCATION}" '
+        f"in the last {DEFAULT_DAYS} days."
     )
 
 
