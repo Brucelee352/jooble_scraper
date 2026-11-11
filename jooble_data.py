@@ -37,9 +37,11 @@ except ImportError:
 JOOBLE_URL_TEMPLATE = "https://jooble.org/api/{key}"
 HEADERS = {"Content-type": "application/json"}
 
+# Defaults for app generation (also the search app.py runs on page load)
 DEFAULT_KEYWORDS = "data analyst"
 DEFAULT_LOCATION = "United States"
 DEFAULT_RADIUS = 50
+DEFAULT_DAYS = 7
 
 #: Column order of the DataFrame returned by :func:`fetch_jobs`.
 COLUMNS = [
