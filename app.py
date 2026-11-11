@@ -14,7 +14,6 @@ import dash_bootstrap_components as dbc
 import dash_mantine_components as dmc
 import pandas as pd
 import plotly.graph_objects as go
-import beautifulsoup4 as bs4
 from plotly.colors import sample_colorscale
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 
@@ -593,6 +592,21 @@ fetch_modal = dbc.Modal(
     is_open=False,
 )
 
+# Job-detail modal: opened by clicking a cell in the Job Title column.
+# Jooble's API only returns a description excerpt (`snippet`), so the modal
+# shows that in full plus a link out to the complete posting.
+job_modal = dbc.Modal(
+    [
+        dbc.ModalHeader(dbc.ModalTitle(id="job-modal-title")),
+        dbc.ModalBody(id="job-modal-body"),
+        dbc.ModalFooter(id="job-modal-footer"),
+    ],
+    id="job-modal",
+    is_open=False,
+    size="lg",
+    scrollable=True,
+)
+
 # Custom indigo scale (10 shades) centered on INDIGO="#5661c9" at index 6,
 # so Mantine's primaryColor matches the app's existing identity.
 BRAND_SCALE = [
@@ -670,6 +684,7 @@ app.layout = dmc.MantineProvider(
                 className="hero-card mt-3 mb-4",
             ),
             fetch_modal,
+            job_modal,
             # Map row: info sidebar (left) + map (right).
             dmc.Grid(
                 [
@@ -711,7 +726,7 @@ app.layout = dmc.MantineProvider(
                         span={"base": 12, "md": 8},
                     ),
                 ],
-                gutter="md",
+                gap="md",
                 className="mb-3",
             ),
             html.H4("Insights", className="mt-4 section-heading",
@@ -756,6 +771,15 @@ app.layout = dmc.MantineProvider(
                 "fontFamily": FONT_STACK,
             },
             style_data_conditional=[
+                # Job titles look/act like links; clicking opens the
+                # job-detail modal (see open_job_modal).
+                {
+                    "if": {"column_id": "title"},
+                    "color": INDIGO,
+                    "textDecoration": "underline",
+                    "cursor": "pointer",
+                    "fontWeight": "500",
+                },
                 {
                     "if": {"state": "selected"},
                     "backgroundColor": INDIGO_TINT,
@@ -982,6 +1006,81 @@ def show_snippet(dv_selected, dv_rows, selected, data):
             ]
         )
     )
+
+
+def job_detail_content(row):
+    """(title, body, footer) children for the job-detail modal."""
+    title = row.get("title") or "Untitled job"
+    facts = [
+        ("Company", row.get("company")),
+        ("Location", row.get("location")),
+        ("Salary", row.get("salary")),
+        ("Job type", row.get("job_type")),
+        ("Seniority", row.get("seniority")),
+        ("Min yrs exp", row.get("min_years")),
+        ("Last updated", row.get("updated")),
+        ("Source", row.get("source")),
+    ]
+    fact_items = [
+        html.Div([html.Strong(f"{label}: "), str(value)], className="mb-1")
+        for label, value in facts
+        if value not in (None, "") and not pd.isna(value)
+    ]
+    skills = [s.strip() for s in str(row.get("skills_str") or "").split(",")
+              if s.strip()]
+    description = str(row.get("snippet") or "").strip()
+    body = [
+        html.Div(fact_items, className="mb-3"),
+        html.Div(
+            [dbc.Badge(s, color="secondary", className="me-1 mb-1")
+             for s in skills],
+            className="mb-3",
+        ) if skills else None,
+        html.H6("Job description"),
+        html.P(
+            description or "No description was provided for this listing.",
+            style={"whiteSpace": "pre-wrap", "lineHeight": "1.6"},
+        ),
+        html.Small(
+            "Jooble's API returns a description excerpt; open the posting "
+            "for the full text.",
+            className="text-muted",
+        ),
+    ]
+    link = row.get("link")
+    footer = (
+        dbc.Button("Open full posting", href=link, target="_blank",
+                   external_link=True, color="primary")
+        if link else None
+    )
+    return title, body, footer
+
+
+@app.callback(
+    Output("job-modal", "is_open"),
+    Output("job-modal-title", "children"),
+    Output("job-modal-body", "children"),
+    Output("job-modal-footer", "children"),
+    Output("jobs-table", "active_cell"),
+    Input("jobs-table", "active_cell"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def open_job_modal(active_cell, data):
+    """Clicking a Job Title cell opens the job-detail modal.
+
+    Rows carry an `id` field, so `active_cell["row_id"]` identifies the job
+    regardless of the table's current sort/filter/page. The active cell is
+    cleared afterwards so clicking the same title again re-opens the modal.
+    """
+    if not active_cell or active_cell.get("column_id") != "title" or not data:
+        return no_update, no_update, no_update, no_update, no_update
+    row_id = active_cell.get("row_id")
+    row = next((r for r in data if r.get("id") == row_id), None)
+    if row is None:
+        return no_update, no_update, no_update, no_update, None
+    title, body, footer = job_detail_content(row)
+    return True, title, body, footer, None
 
 
 # if __name__ == "__main__":
