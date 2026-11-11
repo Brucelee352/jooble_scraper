@@ -4,7 +4,7 @@ Fetch dialog -> jooble_data.fetch_jobs -> DataTable + map. No network calls
 happen at import time or on page load; fetches only run from the modal's
 button callback. Run with:
 
-    ./venv/Scripts/python app.py
+    uv run app.py        (or: .venv/Scripts/python app.py)
 """
 
 import os
@@ -17,10 +17,10 @@ import plotly.graph_objects as go
 from plotly.colors import sample_colorscale
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 
-# Dash 2.x serves React 16 by default, but Dash Mantine Components (Mantine 7)
-# needs React 18 (it calls the React 18 `useId` hook). This must run before
-# the Dash app is instantiated below.
-# dash._dash_renderer._set_react_version("18.2.0")
+# Dash 4.5 bundles React 19.2.4 but still serves React 18.3.1 by default, and
+# Dash Mantine Components v3 refuses to render on React 18 ("DMC v3 requires
+# React 19"). Opt in here; this must run before the Dash app is instantiated.
+dash._dash_renderer._set_react_version("19.2.4")
 
 from jooble_data import (
     DEFAULT_KEYWORDS,
@@ -110,6 +110,12 @@ def do_fetch(days: int, keywords: str | None = None,
     df["skills_str"] = [
         ", ".join(s) if isinstance(s, list) else "" for s in df["skills"]
     ]
+    # Whole years ("5", not "5.0"); nullable so missing stays missing.
+    df["min_years"] = pd.to_numeric(df["min_years"]).round().astype("Int64")
+    # pandas 3 infers a string dtype for text columns and stores missing
+    # values (e.g. seniority=None) as NaN. Hand dcc.Store / DataTable plain
+    # None instead so blanks serialize as JSON null and render empty.
+    df = df.astype(object).where(df.notna(), None)
     return df.to_dict("records"), None
 
 
