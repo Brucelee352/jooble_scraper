@@ -9,7 +9,9 @@ Run with:
     uv run app.py        (or: .venv/Scripts/python app.py)
 """
 
+import hmac
 import os
+import smtplib
 
 import dash
 import dash_bootstrap_components as dbc
@@ -17,7 +19,9 @@ import dash_mantine_components as dmc
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import sample_colorscale
-from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
+from dash import (Dash, Input, Output, State, ctx, dash_table, dcc, html,
+                  no_update)
+from flask import jsonify, request
 
 # Dash 4.5 bundles React 19.2.4 but still serves React 18.3.1 by default, and
 # Dash Mantine Components v3 refuses to render on React 18 ("DMC v3 requires
@@ -33,6 +37,7 @@ from jooble_data import (
     _STATE_CENTROIDS,
     _STATE_NAMES,
 )
+import alerts
 
 # Light indigo / black / silver theme.
 INDIGO = "#5661c9"          # accent: buttons, links, map marker
@@ -163,27 +168,31 @@ def build_map(df: pd.DataFrame) -> tuple[go.Figure, int]:
 # all guard against an empty/missing frame the same way build_map does.
 # ---------------------------------------------------------------------------
 
-# Indigo-adjacent accents so each chart reads as part of one coordinated set
-# rather than an all-indigo wall. Single-series bars each take one accent;
-# categorical charts (donut, seniority) cycle the full sequence.
-ACCENT_INDIGO = "#5661c9"      # base indigo
-ACCENT_VIOLET = "#7c5cd8"
-ACCENT_PERIWINKLE = "#8b93e8"
-ACCENT_SLATE = "#4a56b0"
-ACCENT_TEAL = "#4db6ac"
-ACCENT_PLUM = "#9b5bb8"
-ACCENT_STEEL = "#5c7cba"
-
-# Multi-hue sequence for categorical charts.
+# Chart palette: indigo-led, adapted from plotly's qualitative "Bold" set.
+# Each single-series chart takes ONE solid color, assigned by fixed slot so a
+# chart keeps its color across fetches; the variety comes from chart-to-chart
+# identity, not from shading bars by value (bar length already shows the
+# count). Validated on the white chart cards (OKLCH lightness/chroma bands,
+# adjacent-pair colorblind ΔE >= 8.6, normal-vision ΔE >= 20.7, every color
+# >= 3:1 contrast). Keep the order; append new slots at the end only.
 CHART_COLORS = [
-    ACCENT_INDIGO, ACCENT_VIOLET, ACCENT_TEAL, ACCENT_PLUM,
-    ACCENT_PERIWINKLE, ACCENT_SLATE, ACCENT_STEEL,
+    "#5661c9",  # 0 indigo (brand)  - top companies
+    "#11a579",  # 1 jade            - postings per day
+    "#c2409a",  # 2 magenta         - jobs by state
+    "#d9702a",  # 3 burnt orange    - top skills
+    "#7f3c8d",  # 4 plum            - salary bubble outline / spare
+    "#2f8fc4",  # 5 cerulean        - spare
 ]
+COLOR_COMPANIES, COLOR_TIMELINE, COLOR_STATES, COLOR_SKILLS = CHART_COLORS[:4]
 
-# Single indigo gradient (light -> dark) applied across every chart so the
-# dashboard reads as one coordinated ramp. Bars are shaded by magnitude
-# (small = light, large = dark); ordinal/categorical charts sample the ramp
-# evenly. Keeps everything on-brand with INDIGO / the map marker.
+# Sequential ramp for the one chart where color carries a value: median
+# salary in the salary bubble chart. plotly's ColorBrewer "BuPu" (blue ->
+# purple), clipped to its upper 35-95% so the light end stays visible on
+# white and the dark end stays short of near-black.
+SALARY_SCALE = sample_colorscale(
+    "BuPu", [0.35 + 0.60 * i / 6 for i in range(7)])
+
+# Indigo ramp for the dashboard *chrome* (title strip, buttons, heading bars).
 GRADIENT_INDIGO = [
     "#e9ebfa",  # light periwinkle (INDIGO_TINT)
     "#b8bdec",
@@ -194,8 +203,7 @@ GRADIENT_INDIGO = [
     "#1d2260",  # deep indigo
 ]
 
-# CSS gradient strings for the dashboard *chrome* (not the charts). Built from
-# the same GRADIENT_INDIGO ramp so page furniture matches the Plotly charts.
+# CSS gradient strings for the dashboard chrome, built from GRADIENT_INDIGO.
 _GRAD_STOPS = ", ".join(GRADIENT_INDIGO)
 GRADIENT_STRIP = f"linear-gradient(90deg, {_GRAD_STOPS})"          # full ramp
 GRADIENT_FILL = "linear-gradient(135deg, #5661c9, #2f378f)"        # solid btn
@@ -204,32 +212,10 @@ GRADIENT_TITLE = "linear-gradient(135deg, #5661c9, #2f378f 55%, #1d2260)"
 GRADIENT_ACCENT = "linear-gradient(180deg, #5661c9, #1d2260)"      # heading bar
 
 
-
-def _sample_gradient(pts):
-    """Sample GRADIENT_INDIGO at the given points, clamped to [0, 1].
-
-    Float rounding can nudge a computed point just past 1.0 (e.g. 0.18 + 0.82
-    == 1.0000000000000002), which makes plotly's sample_colorscale index past
-    the end of the scale and raise IndexError. Clamping avoids that.
-    """
-    pts = [min(1.0, max(0.0, p)) for p in pts]
-    return sample_colorscale(GRADIENT_INDIGO, pts)
-
-
-def gradient_by_value(values, lo: float = 0.18, hi: float = 1.0) -> list:
-    """One gradient color per value, darker as the value grows.
-
-    Use for count bars (companies, states, skills, postings/day) so the
-    biggest bar is the deepest indigo and the smallest the lightest.
-    """
-    vals = [float(v) for v in values]
-    if not vals:
-        return []
-    vmin, vmax = min(vals), max(vals)
-    if vmax == vmin:
-        return _sample_gradient([hi] * len(vals))
-    pts = [lo + (hi - lo) * (v - vmin) / (vmax - vmin) for v in vals]
-    return _sample_gradient(pts)
+def _bar_marker(color: str) -> dict:
+    """Solid single-series bar fill with a thin white edge, so adjacent bars
+    keep a visible gap on the white chart cards."""
+    return {"color": color, "line": {"width": 1, "color": "#ffffff"}}
 
 
 def _style_chart(fig: go.Figure, title: str) -> go.Figure:
@@ -239,6 +225,8 @@ def _style_chart(fig: go.Figure, title: str) -> go.Figure:
         font={"family": FONT_STACK, "color": INK},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
+        barcornerradius=4,   # rounded data-ends on every bar chart
+        bargap=0.25,
         margin={"l": 10, "r": 10, "t": 40, "b": 10},
         showlegend=False,
     )
@@ -296,7 +284,7 @@ def build_company_bar(df: pd.DataFrame) -> go.Figure:
     counts = counts.iloc[::-1]  # largest on top for a horizontal bar
     fig = go.Figure(go.Bar(
         x=counts.values, y=counts.index, orientation="h",
-        marker={"color": gradient_by_value(counts.values)},
+        marker=_bar_marker(COLOR_COMPANIES),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
@@ -313,7 +301,7 @@ def build_timeline(df: pd.DataFrame) -> go.Figure:
     per_day = updated.dt.floor("D").value_counts().sort_index()
     fig = go.Figure(go.Bar(
         x=per_day.index, y=per_day.values,
-        marker={"color": gradient_by_value(per_day.values)},
+        marker=_bar_marker(COLOR_TIMELINE),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     fig.update_yaxes(gridcolor=SILVER)
@@ -331,7 +319,7 @@ def build_state_bar(df: pd.DataFrame) -> go.Figure:
         return _empty_chart(title)
     fig = go.Figure(go.Bar(
         x=counts.index, y=counts.values,
-        marker={"color": gradient_by_value(counts.values)},
+        marker=_bar_marker(COLOR_STATES),
     ))
     fig.update_yaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
@@ -345,7 +333,8 @@ def build_salary_bubble(df: pd.DataFrame) -> go.Figure:
     salary or an identifiable US state are dropped. Each bubble is one state
     plotted at its median salary (Y) vs. state (X); the bubble size scales
     with how many salaried jobs back that state's figure, so a big bubble =
-    more confidence.
+    more confidence. Bubble color also encodes the median (SALARY_SCALE,
+    light = lower, deep plum = higher), with a colorbar as its key.
     """
     title = "Median salary by state"
     if df.empty or "salary_value" not in df or "location" not in df:
@@ -370,8 +359,16 @@ def build_salary_bubble(df: pd.DataFrame) -> go.Figure:
         x=agg["state"], y=agg["median"], mode="markers",
         marker={
             "size": sizes,
-            "color": gradient_by_value(agg["median"].to_numpy()),
-            "line": {"width": 1, "color": "#ffffff"},
+            "color": agg["median"],
+            "colorscale": SALARY_SCALE,
+            "showscale": True,
+            "colorbar": {
+                "title": {"text": "Median"},
+                "tickprefix": "$", "tickformat": ".3~s",  # $95k, $110k
+                "thickness": 10, "outlinewidth": 0,
+            },
+            # 2px white ring keeps overlapping bubbles distinguishable.
+            "line": {"width": 2, "color": "#ffffff"},
             "opacity": 0.9,
         },
         customdata=agg["count"],
@@ -401,7 +398,7 @@ def build_skills_bar(df: pd.DataFrame) -> go.Figure:
     counts = counts.iloc[::-1]
     fig = go.Figure(go.Bar(
         x=counts.values, y=counts.index, orientation="h",
-        marker={"color": gradient_by_value(counts.values)},
+        marker=_bar_marker(COLOR_SKILLS),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
@@ -590,6 +587,45 @@ fetch_modal = dbc.Modal(
                 dcc.Loading(
                     html.Div(id="fetch-status", className="mt-3"),
                     type="default",
+                ),
+                # Scheduled email: saves the search above + recipient +
+                # cadence; Cloud Scheduler triggers the sends (see alerts.py).
+                html.Hr(className="my-3"),
+                html.H6("Email alerts", className="mb-2"),
+                dbc.Label("Send to", html_for="alert-recipient"),
+                dbc.Input(
+                    id="alert-recipient",
+                    type="email",
+                    value=(alerts.allowed_recipients() or [""])[0],
+                    className="mb-2",
+                ),
+                dbc.RadioItems(
+                    id="alert-cadence",
+                    options=[
+                        {"label": "Daily", "value": "daily"},
+                        {"label": "Weekly", "value": "weekly"},
+                    ],
+                    value="daily",
+                    inline=True,
+                    className="mb-2",
+                ),
+                html.Div(
+                    [
+                        dbc.Button("Schedule email", id="alert-save",
+                                   color="primary", outline=True, size="sm",
+                                   n_clicks=0, className="me-2"),
+                        dbc.Button("Send now", id="alert-send-now",
+                                   color="secondary", outline=True, size="sm",
+                                   n_clicks=0, className="me-2"),
+                        dbc.Button("Stop alerts", id="alert-stop",
+                                   color="secondary", outline=True, size="sm",
+                                   n_clicks=0),
+                    ],
+                    className="mb-2",
+                ),
+                dcc.Loading(
+                    html.Div(id="alert-status", className="small"),
+                    type="dot",
                 ),
             ]
         ),
@@ -829,6 +865,90 @@ app.layout = dmc.MantineProvider(
 )
 def open_modal(_n, is_open):
     return not is_open
+
+
+@app.callback(
+    Output("alert-status", "children"),
+    Input("fetch-modal", "is_open"),
+    Input("alert-save", "n_clicks"),
+    Input("alert-send-now", "n_clicks"),
+    Input("alert-stop", "n_clicks"),
+    State("keywords-input", "value"),
+    State("location-input", "value"),
+    State("days-input", "value"),
+    State("remote-store", "data"),
+    State("alert-recipient", "value"),
+    State("alert-cadence", "value"),
+    prevent_initial_call=True,
+)
+def alert_action(is_open, _save, _send, _stop, keywords, location, days,
+                 remote, recipient, cadence):
+    """Schedule / send-now / stop the email alert, or show its status when
+    the Fetch dialog opens."""
+    trigger = ctx.triggered_id
+    if trigger == "fetch-modal" and not is_open:
+        return no_update
+    warn = (None if alerts.smtp_configured() else dbc.Alert(
+        "Email isn't configured yet: set SMTP_USER and SMTP_APP_PASSWORD "
+        "(and ALERT_FROM for your alias).", color="warning",
+        className="py-1 px-2 mb-1"))
+    try:
+        if trigger == "alert-save":
+            keywords, location = normalize_search(keywords, location)
+            if remote:
+                location = REMOTE_LOCATION
+            schedule = alerts.new_schedule(
+                keywords=keywords, location=location, days=clamp_days(days),
+                recipient=recipient, cadence=cadence,
+                previous=alerts.load_schedule())
+            alerts.save_schedule(schedule)
+            msg = (f"Saved. {alerts.describe(schedule)} The first email "
+                   "goes out at the next scheduled run, or press Send now.")
+        elif trigger == "alert-send-now":
+            result = alerts.run_due_digest(force=True)
+            if result["status"] == "no-schedule":
+                msg = "Schedule an alert first, then Send now."
+            elif result["sent"]:
+                msg = f"Sent {result['sent']} new job(s)."
+            else:
+                msg = (f"No new jobs to send ({result['found']} found, all "
+                       "already emailed).")
+        elif trigger == "alert-stop":
+            alerts.save_schedule(None)
+            msg = "Alerts stopped."
+        else:
+            msg = alerts.describe(alerts.load_schedule())
+    except (alerts.AlertConfigError, JoobleApiError) as exc:
+        return [warn, dbc.Alert(str(exc), color="danger",
+                                className="py-1 px-2 mb-0")]
+    except smtplib.SMTPException as exc:
+        return [warn, dbc.Alert(f"Email failed: {exc}", color="danger",
+                                className="py-1 px-2 mb-0")]
+    except Exception as exc:  # storage (GCS / disk) errors
+        return [warn, dbc.Alert(f"Couldn't read or save the alert: {exc}",
+                                color="danger", className="py-1 px-2 mb-0")]
+    return [warn, html.Div(msg, className="text-muted")]
+
+
+@server.route("/tasks/send-digest", methods=["POST"])
+def send_digest_task():
+    """Endpoint for Cloud Scheduler (e.g. hourly). Sends the saved alert
+    when its cadence is due. Requires the X-Task-Token header to match the
+    TASK_TOKEN env var, so the public URL can't be used to trigger sends."""
+    expected = os.environ.get("TASK_TOKEN", "")
+    if not expected:
+        return jsonify(error="TASK_TOKEN is not configured"), 503
+    given = request.headers.get("X-Task-Token", "")
+    if not hmac.compare_digest(given.encode(), expected.encode()):
+        return jsonify(error="forbidden"), 403
+    try:
+        return jsonify(alerts.run_due_digest()), 200
+    except alerts.AlertConfigError as exc:
+        return jsonify(error=str(exc)), 500
+    except JoobleApiError as exc:
+        return jsonify(error=str(exc)), 502
+    except smtplib.SMTPException as exc:
+        return jsonify(error=f"smtp: {exc}"), 502
 
 
 @app.callback(

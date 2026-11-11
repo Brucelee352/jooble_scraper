@@ -10,6 +10,7 @@ dependencies = [
     "dash>=4.5",                         # 4.5+ ships React 19 (required by DMC 3)
     "dash-bootstrap-components>=2.0.4",
     "dash-mantine-components>=3.0.0",
+    "google-cloud-storage>=2.18",       # alert schedule store on Cloud Run
     "pandas>=3.1.1",
     "plotly>=7.1.0",
     "python-dotenv>=1.0.1",
