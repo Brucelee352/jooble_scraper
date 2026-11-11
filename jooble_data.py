@@ -11,6 +11,10 @@ Public interface (see INTERFACE.md for the full contract):
 The API key is read from the ``KEY`` environment variable (or passed
 explicitly via ``api_key=``). A ``.env`` file is honored if present via
 python-dotenv, but the environment variable always wins.
+
+Changelog: 
+
+1.9 (11/11/2026): Fixed tool-tip to parse raw html
 """
 
 from __future__ import annotations
@@ -18,8 +22,9 @@ from __future__ import annotations
 import os
 import re
 import time
+import html as html
 from datetime import datetime, timedelta
-
+from bs4 import BeautifulSoup as bs4 
 import pandas as pd
 import requests
 
@@ -174,6 +179,15 @@ _CITY_COORDS = {
     "charleston, sc": (32.7765, -79.9311),
 }
 
+def clean_snippet(raw: str | None) -> str:
+    if not raw:
+        return ""
+    soup = bs4(raw, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    text = soup.get_text(" ", strip=True)
+    text = html.unescape(text)            # catches double-escaped &amp;nbsp; etc.
+    return " ".join(text.split())          # collapse whitespace
 
 def geocode_location(location: str | None) -> tuple[float, float]:
     """Best-effort offline geocode of a Jooble location string.
@@ -228,10 +242,10 @@ def geocode_location(location: str | None) -> tuple[float, float]:
 _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Intern", re.compile(r"\bintern(ship)?\b", re.I)),
     ("Principal", re.compile(r"\bprincipal\b", re.I)),
-    ("Staff", re.compile(r"\bstaff\b", re.I)),
+    ("Staff", re.compile(r"\b(?:staff|contributor)\b", re.I)),
     ("Lead", re.compile(r"\b(?:team\s+)?lead\b", re.I)),
     ("Senior", re.compile(r"\b(?:senior|sr\.?)\b|\biii\b", re.I)),
-    ("Mid", re.compile(r"\b(?:mid[-\s]?level|intermediate|ii)\b", re.I)),
+    ("Mid", re.compile(r"\b(?:mid[-\s]?level|intermediate|associate|experienced|coordinator|ii)\b", re.I)),
     ("Junior", re.compile(
         r"\b(?:junior|jr\.?|entry[-\s]?level|entry|graduate|new\s+grad)\b",
         re.I)),
@@ -250,8 +264,9 @@ DEFAULT_SKILLS = [
     "Python", "SQL", "R", "Java", "Scala", "Go", "JavaScript", "TypeScript",
     "dbt", "Airflow", "Spark", "Kafka", "Hadoop", "Snowflake", "Redshift",
     "BigQuery", "Databricks", "Postgres", "MySQL", "MongoDB", "Kubernetes",
-    "Docker", "AWS", "Azure", "GCP", "Terraform", "Tableau", "Power BI",
-    "Looker", "Pandas", "PyTorch", "TensorFlow", "Excel", "SAS",
+    "Docker", "AWS", "Amazon Web Services", "Azure", "GCP", "Terraform", "Tableau", 
+    "Power BI", "Looker", "Pandas", "PyTorch", "TensorFlow", "Excel", "SAS", "Informatica",
+    "Fivetran", "Polars", "API", "JSON", "C#", "SSIS", "Airbyte", "ODI" 
 ]
 
 _SKILL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -279,13 +294,13 @@ def parse_min_years(title: str | None, snippet: str | None = None) -> int | None
 
     Scans for phrases like "5+ years" / "3-5 yrs" and returns the smallest
     low-end value found (so "5+ yrs Python, 3+ yrs SQL" yields 3). Values
-    outside 1-30 are ignored as noise (dates, unrelated numbers).
+    outside 3-10 are ignored as noise (dates, unrelated numbers or unrealistic JDs).
     """
     best: int | None = None
     for text in (f"{title or ''} {snippet or ''}",):
         for match in _YEARS_RE.finditer(text):
             n = int(match.group(1))
-            if 1 <= n <= 30:
+            if 3 <= n <= 10:
                 best = n if best is None else min(best, n)
     return best
 
@@ -551,7 +566,7 @@ def fetch_jobs(
             loc = job.get("location", "")
             lat, lon = geocode_location(loc)
             title = job.get("title", "")
-            snippet = job.get("snippet", "")
+            snippet = clean_snippet(job.get("snippet", ""))
             seen_ids.add(job_id)
             rows.append({
                 "id": job_id,
