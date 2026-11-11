@@ -20,7 +20,7 @@ from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 # Dash 2.x serves React 16 by default, but Dash Mantine Components (Mantine 7)
 # needs React 18 (it calls the React 18 `useId` hook). This must run before
 # the Dash app is instantiated below.
-dash._dash_renderer._set_react_version("18.2.0")
+# dash._dash_renderer._set_react_version("18.2.0")
 
 from jooble_data import (
     DEFAULT_KEYWORDS,

@@ -24,7 +24,7 @@ import re
 import time
 import html as html
 from datetime import datetime, timedelta
-from bs4 import BeautifulSoup as bs4 
+from bs4 import BeautifulSoup
 import pandas as pd
 import requests
 
@@ -182,7 +182,7 @@ _CITY_COORDS = {
 def clean_snippet(raw: str | None) -> str:
     if not raw:
         return ""
-    soup = bs4(raw, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style"]):
         tag.decompose()
     text = soup.get_text(" ", strip=True)
