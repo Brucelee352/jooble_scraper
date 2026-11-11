@@ -14,6 +14,7 @@ import dash_bootstrap_components as dbc
 import dash_mantine_components as dmc
 import pandas as pd
 import plotly.graph_objects as go
+import beautifulsoup4 as bs4
 from plotly.colors import sample_colorscale
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 
