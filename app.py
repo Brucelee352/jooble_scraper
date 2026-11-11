@@ -25,6 +25,7 @@ from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 dash._dash_renderer._set_react_version("19.2.4")
 
 from jooble_data import (
+    DEFAULT_DAYS,
     DEFAULT_KEYWORDS,
     DEFAULT_LOCATION,
     JoobleApiError,
@@ -48,7 +49,6 @@ MARKER_COLOR = INDIGO
 
 REMOTE_LOCATION = "Remote" 
 MAX_DAYS = 21
-DEFAULT_DAYS = 7  # recency window for the on-load fetch and the Fetch dialog
 
 TABLE_COLUMNS = [
     {"name": "Job Title", "id": "title"},
