@@ -1,48 +1,51 @@
 # jooble_scraper
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Dash](https://img.shields.io/badge/Dash-2.18-5661c9)
+![Dash](https://img.shields.io/badge/Dash-4.5-5661c9)
 ![Deploy](https://img.shields.io/badge/deploy-Cloud%20Run-4285F4)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A program to scour Jooble.org for job listings — and now a full Plotly Dash web app that pulls those listings into a sortable table, maps them across the US, and charts a few insights about them. The original CSV script is still here too. Works with any IDE; I built it in Visual Studio Code with extensions.
+A program that pulls job listings from Jooble.org. It started as a script that saved them to a CSV, and it's now a Plotly Dash web app that puts the listings in a sortable table, maps them across the US, and charts a few insights about them. The original CSV script is still here too. Works with any IDE; I built it in Visual Studio Code with extensions.
 
 ## Introduction
 
-This was born out of a desire to share my projects with the public. I've been upskilling and looking for work for the last couple of years, and I figured that — in addition to scratching my own itch, this might help my friends cut through some of the noise in the current labor market.
+I started this because I wanted to share my projects with the public. I've been upskilling and looking for work for the last couple of years, and I figured that besides scratching my own itch, it might help my friends cut through some of the noise in the current labor market.
 
-What started as a single script has grown quite a bit. There are now three pieces:
+What started as a single script has grown quite a bit. There are now four pieces:
 
-- **`app.py`** — the Dash web app: a fetch dialog, an interactive US map, five insight charts, and a sortable/filterable listings table.
-- **`jooble_data.py`** — a reusable, importable data layer (`fetch_jobs` plus parsers). No network calls happen at import time.
-- **`scraper_source.py`** — the original CLI script, still here if all you want is the `.csv`.
+- `app.py`: the Dash web app, with a fetch dialog, an interactive US map, five insight charts, a sortable and filterable listings table you can email as a `.csv`, and an About panel.
+- `jooble_data.py`: a reusable data layer (`fetch_jobs` plus parsers) that you can import without triggering any network calls.
+- `mailer.py`: emails the listings table as a `.csv` attachment through Gmail SMTP.
+- `scraper_source.py`: the original CLI script, still here if all you want is the `.csv`.
 
 ## What the web app does
 
-The app is built with **Plotly Dash**, **Dash Bootstrap Components**, and **Dash Mantine Components (DMC 2.8)**, themed with a light indigo / silver gradient and the Sora typeface. No network calls happen on page load — a fetch only runs when you click the button in the modal.
+The app is built with Plotly Dash 4.5, Dash Bootstrap Components, and Dash Mantine Components (DMC 3), themed with a light indigo and silver gradient and the Sora typeface. Each page load runs one fetch of the default search so the dashboard opens populated. After that, fetches run from the **Fetch Jobs** dialog.
 
-**A note for anyone hacking on `app.py`:** DMC 2.x is built on Mantine 7, which needs React 18, but Dash 2.x still ships React 16 by default. So `app.py` pins the renderer with `dash._dash_renderer._set_react_version("18.2.0")` *before* the `Dash(...)` app is created. That line, together with the `dash-mantine-components` pin in `requirements.txt`, is load-bearing — remove either and the Mantine components break.
+A note for anyone hacking on `app.py`: DMC 3 requires React 19. Dash 4.5 bundles React 19 but still serves React 18 by default, so `app.py` opts in with `dash._dash_renderer._set_react_version("19.2.4")` *before* the `Dash(...)` app is created. Keep that line and the `dash>=4.5` and `dash-mantine-components>=3.0.0` requirements in `pyproject.toml`; remove either and the Mantine components break.
 
 What you get after a fetch:
 
-- **Fetch dialog** — type in keywords and a location (they start filled in with my data-engineering defaults), flip a **Remote** toggle, and choose a **recency window of 1–21 days** (up to 100 jobs). Blank inputs fall back to the defaults.
-- **Interactive map** — every job that can be geocoded is plotted on an OpenStreetMap of the US. Click a marker and it selects that job's row in the table below.
-- **Filter by state** — a dropdown in the sidebar filters the **map and the listings table** down to a single state. (The insight charts always reflect the full fetch, not the state filter.)
-- **Five insight charts** — Top companies, Postings per day, Jobs by state, Top skills mentioned, and a **Median salary by state** bubble chart (bubble size scales with how many salaried jobs back that state's figure).
-- **Listings table** — sortable and filterable, paginated 15 rows at a time, with columns for Job Title, Company, Location, Salary, Job Type, Seniority, Min Yrs Exp, Skills, Last Updated, and a clickable link. Select a row (or click a map marker) to see the job's snippet in a detail card.
+- Fetch dialog: type in keywords and a location (they start filled in with the defaults, "data analyst" in "United States"), flip the **Remote** toggle, and choose a recency window of 1 to 21 days (up to 100 jobs). Blank inputs fall back to the defaults.
+- Interactive map: every job that can be geocoded is plotted on an OpenStreetMap of the US. Click a marker and it selects that job's row in the table below.
+- Filter by state: a dropdown in the sidebar narrows the map and the listings table to a single state. The insight charts always show the full fetch.
+- Five insight charts: Top companies, Postings per day, Jobs by state, Top skills mentioned, and a Median salary by state bubble chart, where bubble size scales with how many salaried jobs back that state's figure. Each bar chart shades its bars with its own color scale, darker for higher counts; the scales are set in `CHART_SCALES` in `app.py`.
+- Listings table: sortable and filterable, 15 rows per page, with columns for Job Title, Company, Location, Salary, Job Type, Seniority, Min Yrs Exp, Skills, Last Updated, and a clickable link. Select a row (or click a map marker) to see the job's snippet in a detail card, or click a job title to open it in a pop-up.
+- Email CSV: above the table, type an address to get the rows currently shown as a `.csv` attachment (see [Email a CSV of the listings](#email-a-csv-of-the-listings)).
+- About: a button in the header that opens a scrollable panel describing the API, the data pipeline, the configuration, and deployment.
 
-Listings that can't be pinned to a location (remote roles, mostly) stay in the table but sit the map out. The app starts up fine without an API key, it'll just remind you to set one before it can fetch anything.
+Listings that can't be pinned to a location (remote roles, mostly) stay in the table but sit the map out. The app starts up fine without an API key; it'll just remind you to set one before it can fetch anything.
 
 ### About the extra columns
 
 The data layer pulls a bit of extra signal out of each listing with the parsers in `jooble_data.py`:
 
-- `parse_seniority` — a best-effort level (Intern / Junior / Mid / Senior / Lead / Staff / Principal) from the title.
-- `parse_min_years` — the minimum years of experience mentioned (e.g. "5+ years").
-- `extract_skills` — matches a built-in vocabulary of ~35 tools/languages (Python, SQL, dbt, Airflow, Snowflake, AWS, …).
-- `parse_salary` — normalizes Jooble's messy free-text salary ("$90k–$120k", "$45/hr", "$8,000 per month") into an estimated annual USD figure, exposed as the `salary_value` column that powers the salary bubble chart.
+- `parse_seniority` guesses a level (Intern / Junior / Mid / Senior / Lead / Staff / Principal) from the title, falling back to the snippet.
+- `parse_min_years` finds the minimum years of experience mentioned (e.g. "5+ years").
+- `extract_skills` matches a built-in list of about 45 tools and languages (Python, SQL, dbt, Airflow, Snowflake, AWS, …).
+- `parse_salary` turns Jooble's messy free-text salary ("$90k–$120k", "$45/hr", "$8,000 per month") into an estimated annual USD figure. That's the `salary_value` column behind the salary bubble chart.
 
-Note: Jooble only gives a truncated snippet per listing, so all of the above are best-effort and can be sparse or empty. Unknowns come back as `None` / `[]`.
+Jooble only gives a truncated snippet per listing, so all of these are best guesses and can come back sparse or empty. Unknowns come back as `None` / `[]`.
 
 ## Getting started
 
@@ -55,7 +58,7 @@ Note: Jooble only gives a truncated snippet per listing, so all of the above are
    KEY=your_api_key_here
    ```
 
-> **Use Python 3.12.** The pinned version of pandas doesn't ship wheels for 3.14 yet, so a newer interpreter will fail to install the requirements.
+> Use Python 3.12 or newer. pandas 3 needs at least 3.11, and the Docker image uses 3.12.
 
 ## Setting up a virtual environment
 
@@ -66,11 +69,11 @@ You *can* just copy the scripts into your IDE and configure things ad hoc, but I
    py -3.12 -m venv venv
    ```
 2. Activate it:
-   - **Windows:**
+   - Windows:
      ```
      venv\Scripts\activate
      ```
-   - **Mac/Linux:**
+   - Mac/Linux:
      ```
      source venv/bin/activate
      ```
@@ -78,7 +81,9 @@ You *can* just copy the scripts into your IDE and configure things ad hoc, but I
    ```
    pip install -r requirements.txt
    ```
-4. **Optional:** run `deactivate` to turn the virtual environment off later.
+4. Run `deactivate` when you want to turn the virtual environment off.
+
+If you use [uv](https://docs.astral.sh/uv/), skip the steps above: `uv run app.py` creates the environment from `pyproject.toml` / `uv.lock` and starts the app. After changing dependencies in `pyproject.toml`, run `uv lock` and regenerate `requirements.txt` with `uv export --no-hashes --no-dev --no-emit-project --format requirements-txt -o requirements.txt`.
 
 ## Running the web app
 
@@ -88,7 +93,7 @@ This is the fun part. With your key set, run:
 python app.py
 ```
 
-Then open http://127.0.0.1:8050 in your browser. Click **Fetch Jobs**, adjust the keywords / location / Remote toggle / day window, and hit **Fetch** — you'll get the map, the charts, and the table.
+Then open http://127.0.0.1:8050 in your browser. The default search loads automatically. To run your own, click **Fetch Jobs**, adjust the keywords, location, Remote toggle, or day window, and hit **Fetch**.
 
 ## Running the original script
 
@@ -98,20 +103,20 @@ The classic experience. With your key set, run:
 python scraper_source.py
 ```
 
-It'll ask how many pages you want (up to 10), then save the results to `Documents/jooble_list.csv` under the project folder. **Make sure that `Documents` folder exists first**, or the save will fail. This script writes a plain CSV — it doesn't do any of the geocoding, salary parsing, or skill extraction the Dash app does.
+It'll ask how many pages you want (up to 10), then save the results to `Documents/jooble_list.csv` under the project folder. Make sure that `Documents` folder exists first, or the save will fail. This script writes a plain CSV and skips the geocoding, salary parsing, and skill extraction the Dash app does.
 
 ## Deploy to Google Cloud Run
 
-The repo ships everything needed to run the app as a container on Google Cloud Run:
+The repo has everything needed to run the app as a container on Google Cloud Run:
 
-- a **`Dockerfile`** that serves the Dash WSGI app with **gunicorn** — `app.py` exposes it as `server = app.server`, and the container binds gunicorn to Cloud Run's injected `$PORT` (8080 by default);
-- a **`.dockerignore`** that keeps the image small and keeps local/secret files (like `.env`) out of it;
-- a **`.gcloudignore`** that controls what `gcloud ... --source .` uploads to Cloud Build;
-- `gunicorn` pinned in **`requirements.txt`**.
+- `Dockerfile` serves the Dash WSGI app with gunicorn. `app.py` exposes it as `server = app.server`, and the container binds gunicorn to Cloud Run's injected `$PORT` (8080 by default).
+- `.dockerignore` keeps the image small and keeps local and secret files (like `.env`) out of it.
+- `.gcloudignore` controls what `gcloud ... --source .` uploads to Cloud Build.
+- `gunicorn` is listed in `pyproject.toml` and `requirements.txt`. It's Linux/macOS only and doesn't run on Windows.
 
 The app reads the Jooble API key from the `KEY` environment variable, so the deploy below injects it at runtime via Secret Manager.
 
-> Placeholders below — `YOUR_PROJECT_ID`, `YOUR_JOOBLE_KEY` — are yours to fill in. `us-central1` is just an example region; use whichever is closest to you.
+> Fill in `YOUR_PROJECT_ID` and `YOUR_JOOBLE_KEY` below. `us-central1` is just an example region; use whichever is closest to you.
 
 ```bash
 # 0) Authenticate and select project + default region
@@ -143,11 +148,11 @@ gcloud run deploy jooble-scraper \
 
 A few things worth knowing:
 
-- **`--source .` uploads the current directory (respecting `.gcloudignore`) to Cloud Build.** It builds from the local files on disk, *not* from GitHub, so run it from the repo root where the `Dockerfile` lives, or pass `--source <path>`.
-- **A simpler but less secure alternative to steps 2–3** is to skip Secret Manager and pass the key directly: `--set-env-vars KEY=YOUR_JOOBLE_KEY`. It works, but the key ends up in the service config in plaintext.
-- **`.env` is excluded from both the image and the upload** (via `.dockerignore` and `.gcloudignore`), which is why the key has to be injected at runtime rather than baked in.
-- **Seeing OOM?** Bump `--memory 1Gi`.
-- The service **scales to zero when idle**, so you're not paying for it between fetches.
+- `--source .` uploads the current directory (minus anything in `.gcloudignore`) to Cloud Build. It builds from the files on your disk, *not* from GitHub, so run it from the repo root where the `Dockerfile` lives, or pass `--source <path>`.
+- You can skip Secret Manager (steps 2 and 3) and pass the key directly with `--set-env-vars KEY=YOUR_JOOBLE_KEY`. It's simpler, but the key ends up in the service config in plaintext.
+- `.env` is kept out of both the image and the upload (by `.dockerignore` and `.gcloudignore`), which is why the key has to be injected at runtime.
+- If you see out-of-memory errors, bump it to `--memory 1Gi`.
+- The service scales to zero when idle, so you're not paying for it between fetches.
 
 ### Test the container locally first (optional)
 
@@ -158,63 +163,40 @@ docker run -e KEY=YOUR_JOOBLE_KEY -e PORT=8080 -p 8080:8080 jooble
 
 Then open http://127.0.0.1:8080.
 
-## Email alerts
+## Email a CSV of the listings
 
-The **Fetch Jobs** dialog has an *Email alerts* section. **Schedule email** saves the dialog's current search (keywords, location, recency window) together with a recipient and a cadence (daily or weekly). From then on, each email lists only the jobs that weren't in an earlier one, and nothing is sent when there's nothing new. **Send now** runs it immediately, and **Stop alerts** clears the schedule. The logic lives in `alerts.py`.
+Under **Listings**, type an email address and press **Email CSV**. The app sends the rows currently in the table as a `.csv` attachment, with the state filter and any column filters or sorting you've applied, under the table's own column headers. The logic lives in `mailer.py`.
 
-Mail goes out through **Gmail SMTP**, optionally *from* an address on your own domain:
+Any visitor can enter any address, so sends are limited to one every 45 seconds per app instance (`SEND_COOLDOWN_SECONDS` in `mailer.py`). Cell values that start with `=`, `+`, `-` or `@` get a leading `'` so spreadsheet apps don't run them as formulas.
 
-1. **Make the alias able to receive mail.** Set up forwarding for e.g. `jobs@yourdomain.com` to your Gmail (Cloudflare Email Routing, ImprovMX, or your registrar's forwarding). Gmail sends a confirmation code to that address.
-2. **Verify it in Gmail:** Settings → Accounts and Import → *Send mail as* → Add another email address, with "Treat as an alias" ticked.
-3. **Add an SPF record** to the domain that includes Google, e.g. `v=spf1 include:_spf.google.com ~all`, merged with whatever your forwarding service needs. Avoid a strict DMARC policy (`p=quarantine` or `p=reject`): Gmail can't sign mail as your domain, so those emails would get filtered.
-4. **Create a Gmail App Password** (requires 2-Step Verification): Google Account → Security → App passwords.
+Mail goes out through Gmail SMTP, optionally *from* an address on your own domain:
+
+1. Make the alias able to receive mail. Set up forwarding for e.g. `jobs@yourdomain.com` to your Gmail (Cloudflare Email Routing, ImprovMX, or your registrar's forwarding). Gmail sends a confirmation code to that address.
+2. Verify it in Gmail: Settings → Accounts and Import → *Send mail as* → Add another email address, with "Treat as an alias" ticked.
+3. Add an SPF record to the domain that includes Google, e.g. `v=spf1 include:_spf.google.com ~all`, merged with whatever your forwarding service needs. Avoid a strict DMARC policy (`p=quarantine` or `p=reject`): Gmail can't sign mail as your domain, so those emails would get filtered.
+4. Create a Gmail App Password (requires 2-Step Verification): Google Account → Security → App passwords.
 
 | Variable | What it is |
 |---|---|
 | `SMTP_USER` | Gmail address that logs in to SMTP |
 | `SMTP_APP_PASSWORD` | The App Password from step 4 |
 | `ALERT_FROM` | The verified alias, e.g. `jobs@yourdomain.com` (defaults to `SMTP_USER`) |
-| `ALERT_TO` | Comma-separated allowlist of recipients the UI may schedule (defaults to `SMTP_USER`). The app is public, so this stops anyone from using it to email arbitrary addresses. |
-| `ALERT_STORE` | Where the schedule is saved: `gs://bucket/path.json` on Cloud Run (container disk doesn't persist), or a local file (default `.alerts/schedule.json`) |
-| `TASK_TOKEN` | Shared secret the scheduler must send in the `X-Task-Token` header |
 
-Locally, put these in `.env` (see `example.env`) and press **Send now** to test.
-
-**The timer is Cloud Scheduler.** Cloud Run shuts idle containers down, so the app can't keep its own clock. Instead, Cloud Scheduler POSTs to `/tasks/send-digest` every hour, and the app sends only when the saved cadence is due:
+Locally, put these in `.env` (see `example.env`). On Cloud Run:
 
 ```bash
-# Bucket for the schedule, readable/writable by the Cloud Run service account
-gcloud storage buckets create gs://YOUR_BUCKET --location=us-central1
-gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
-  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/storage.objectAdmin"
-
-# Secrets (grant secretAccessor on each, as for jooble-key above)
 printf "YOUR_APP_PASSWORD" | gcloud secrets create smtp-app-password --data-file=-
-TASK_TOKEN=$(openssl rand -hex 24)
-printf "$TASK_TOKEN" | gcloud secrets create task-token --data-file=-
-
-# Redeploy with the alert settings
+# Grant secretAccessor on it, as for jooble-key above, then redeploy:
 gcloud run deploy jooble-scraper --source . \
-  --set-secrets KEY=jooble-key:latest,SMTP_APP_PASSWORD=smtp-app-password:latest,TASK_TOKEN=task-token:latest \
-  --set-env-vars SMTP_USER=you@gmail.com,ALERT_FROM=jobs@yourdomain.com,ALERT_TO=you@gmail.com,ALERT_STORE=gs://YOUR_BUCKET/alerts/schedule.json
-
-# Hourly trigger
-gcloud services enable cloudscheduler.googleapis.com
-SERVICE_URL=$(gcloud run services describe jooble-scraper --format='value(status.url)')
-gcloud scheduler jobs create http jooble-digest --location=us-central1 \
-  --schedule="0 * * * *" --http-method=POST \
-  --uri="${SERVICE_URL}/tasks/send-digest" \
-  --headers="X-Task-Token=${TASK_TOKEN}"
+  --set-secrets KEY=jooble-key:latest,SMTP_APP_PASSWORD=smtp-app-password:latest \
+  --set-env-vars SMTP_USER=you@gmail.com,ALERT_FROM=jobs@yourdomain.com
 ```
 
-Daily emails therefore go out about 24 hours after the previous one, on the hour. Note that anyone who can open the app can also change or stop the schedule. Recipients are still limited to `ALERT_TO`.
-
-Tests for the alerts (no network; SMTP and the API are mocked): `python -m unittest discover -s tests`.
+Tests (no network; SMTP is mocked): `python -m unittest discover -s tests`.
 
 ## For the curious
 
-There's a smoke-test harness under `.claude/skills/run-jooble-scraper/` that exercises everything against a **mocked** API — no key needed. Handy if you want to poke at the code without burning requests:
+There's a smoke-test harness under `.claude/skills/run-jooble-scraper/` that runs everything against a mocked API, so you don't need a key. Handy if you want to poke at the code without burning requests:
 
 ```
 python .claude/skills/run-jooble-scraper/driver.py --module
@@ -225,15 +207,14 @@ The data layer's contract lives in `INTERFACE.md` if you want to build something
 
 ## To-Dos
 
-1. Attach the results as a `.csv` to the alert emails (scheduled HTML alerts are done; see [Email alerts](#email-alerts)).
-2. Offer an `.xlsx` export for further manipulation in Excel.
-3. Smarter geocoding — right now the map works off a built-in list of ~60 major cities plus state centroids, so smaller towns land on their state's center.
+1. Offer an `.xlsx` export for further manipulation in Excel.
+2. Smarter geocoding. Right now the map works off a built-in list of about 60 major cities plus state centroids, so smaller towns land on their state's center.
 
-*(Docker / Cloud Run support was on this list and is now done — see [Deploy to Google Cloud Run](#deploy-to-google-cloud-run) above.)*
+*(Docker and Cloud Run support was on this list and is done; see [Deploy to Google Cloud Run](#deploy-to-google-cloud-run) above.)*
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).
 
 ---
 
