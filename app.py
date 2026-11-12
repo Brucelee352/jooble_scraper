@@ -168,22 +168,26 @@ def build_map(df: pd.DataFrame) -> tuple[go.Figure, int]:
 # all guard against an empty/missing frame the same way build_map does.
 # ---------------------------------------------------------------------------
 
-# Chart palette: indigo-led, adapted from plotly's qualitative "Bold" set.
-# Each single-series chart takes ONE solid color, assigned by fixed slot so a
-# chart keeps its color across fetches; the variety comes from chart-to-chart
-# identity, not from shading bars by value (bar length already shows the
-# count). Validated on the white chart cards (OKLCH lightness/chroma bands,
-# adjacent-pair colorblind ΔE >= 8.6, normal-vision ΔE >= 20.7, every color
-# >= 3:1 contrast). Keep the order; append new slots at the end only.
-CHART_COLORS = [
-    "#5661c9",  # 0 indigo (brand)  - top companies
-    "#11a579",  # 1 jade            - postings per day
-    "#c2409a",  # 2 magenta         - jobs by state
-    "#d9702a",  # 3 burnt orange    - top skills
-    "#7f3c8d",  # 4 plum            - salary bubble outline / spare
-    "#2f8fc4",  # 5 cerulean        - spare
+def _ramp(name: str, lo: float, hi: float, steps: int = 7) -> list[str]:
+    """Sample the lo..hi slice of a named plotly colorscale (append "_r" to
+    reverse). Clipping keeps the light end visible on the white cards and the
+    dark end short of near-black."""
+    return sample_colorscale(
+        name, [lo + (hi - lo) * i / (steps - 1) for i in range(steps)])
+
+
+# Per-chart sequential colorscales: each bar is shaded by its value (low =
+# light, high = deep). Slot order is fixed so a chart keeps its scale across
+# fetches; append new slots at the end only.
+CHART_SCALES = [
+    _ramp("thermal", 0.15, 0.75),  # 0 top companies (yellow end cut: low contrast)
+    _ramp("purples", 0.35, 0.95),  # 1 postings per day
+    _ramp("ice_r", 0.25, 0.90),    # 2 jobs by state (reversed: high = dark)
+    _ramp("dense", 0.20, 0.90),    # 3 top skills
+    _ramp("PuBu", 0.35, 0.95),     # 4 spare
+    _ramp("PuRd", 0.35, 0.95),     # 5 spare
 ]
-COLOR_COMPANIES, COLOR_TIMELINE, COLOR_STATES, COLOR_SKILLS = CHART_COLORS[:4]
+SCALE_COMPANIES, SCALE_TIMELINE, SCALE_STATES, SCALE_SKILLS = CHART_SCALES[:4]
 
 # Sequential ramp for the one chart where color carries a value: median
 # salary in the salary bubble chart. plotly's ColorBrewer "BuPu" (blue ->
@@ -212,10 +216,15 @@ GRADIENT_TITLE = "linear-gradient(135deg, #5661c9, #2f378f 55%, #1d2260)"
 GRADIENT_ACCENT = "linear-gradient(180deg, #5661c9, #1d2260)"      # heading bar
 
 
-def _bar_marker(color: str) -> dict:
-    """Solid single-series bar fill with a thin white edge, so adjacent bars
-    keep a visible gap on the white chart cards."""
-    return {"color": color, "line": {"width": 1, "color": "#ffffff"}}
+def _bar_marker(values, scale: list[str]) -> dict:
+    """Bar fill shaded by value along `scale`, with a thin white edge so
+    adjacent bars keep a visible gap on the white chart cards."""
+    return {
+        "color": list(values),
+        "colorscale": scale,
+        "cmin": 0,  # anchor at zero so a small bar reads as small, not mid-scale
+        "line": {"width": 1, "color": "#ffffff"},
+    }
 
 
 def _style_chart(fig: go.Figure, title: str) -> go.Figure:
@@ -284,7 +293,7 @@ def build_company_bar(df: pd.DataFrame) -> go.Figure:
     counts = counts.iloc[::-1]  # largest on top for a horizontal bar
     fig = go.Figure(go.Bar(
         x=counts.values, y=counts.index, orientation="h",
-        marker=_bar_marker(COLOR_COMPANIES),
+        marker=_bar_marker(counts.values, SCALE_COMPANIES),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
@@ -301,7 +310,7 @@ def build_timeline(df: pd.DataFrame) -> go.Figure:
     per_day = updated.dt.floor("D").value_counts().sort_index()
     fig = go.Figure(go.Bar(
         x=per_day.index, y=per_day.values,
-        marker=_bar_marker(COLOR_TIMELINE),
+        marker=_bar_marker(per_day.values, SCALE_TIMELINE),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     fig.update_yaxes(gridcolor=SILVER)
@@ -319,7 +328,7 @@ def build_state_bar(df: pd.DataFrame) -> go.Figure:
         return _empty_chart(title)
     fig = go.Figure(go.Bar(
         x=counts.index, y=counts.values,
-        marker=_bar_marker(COLOR_STATES),
+        marker=_bar_marker(counts.values, SCALE_STATES),
     ))
     fig.update_yaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
@@ -398,7 +407,7 @@ def build_skills_bar(df: pd.DataFrame) -> go.Figure:
     counts = counts.iloc[::-1]
     fig = go.Figure(go.Bar(
         x=counts.values, y=counts.index, orientation="h",
-        marker=_bar_marker(COLOR_SKILLS),
+        marker=_bar_marker(counts.values, SCALE_SKILLS),
     ))
     fig.update_xaxes(gridcolor=SILVER)
     return _style_chart(fig, title)
