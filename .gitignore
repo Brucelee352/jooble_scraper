@@ -3,5 +3,3 @@ Documents/
 *.env
 !example.env
 __pycache__/
-# Local email-alert schedule (alerts.py); on Cloud Run it lives in GCS
-.alerts/

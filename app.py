@@ -9,7 +9,6 @@ Run with:
     uv run app.py        (or: .venv/Scripts/python app.py)
 """
 
-import hmac
 import os
 import smtplib
 
@@ -19,9 +18,8 @@ import dash_mantine_components as dmc
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import sample_colorscale
-from dash import (Dash, Input, Output, State, ctx, dash_table, dcc, html,
+from dash import (Dash, Input, Output, State, dash_table, dcc, html,
                   no_update)
-from flask import jsonify, request
 
 # Dash 4.5 bundles React 19.2.4 but still serves React 18.3.1 by default, and
 # Dash Mantine Components v3 refuses to render on React 18 ("DMC v3 requires
@@ -37,7 +35,7 @@ from jooble_data import (
     _STATE_CENTROIDS,
     _STATE_NAMES,
 )
-import alerts
+import mailer
 
 # Light indigo / black / silver theme.
 INDIGO = "#5661c9"          # accent: buttons, links, map marker
@@ -180,8 +178,8 @@ def _ramp(name: str, lo: float, hi: float, steps: int = 7) -> list[str]:
 # light, high = deep). Slot order is fixed so a chart keeps its scale across
 # fetches; append new slots at the end only.
 CHART_SCALES = [
-    _ramp("thermal", 0.15, 0.75),  # 0 top companies (yellow end cut: low contrast)
-    _ramp("purples", 0.35, 0.95),  # 1 postings per day
+    _ramp("PuBu", 0.15, 0.75),  # 0 top companies (yellow end cut: low contrast)
+    _ramp("ice", 0.35, 0.95),  # 1 postings per day
     _ramp("ice_r", 0.25, 0.90),    # 2 jobs by state (reversed: high = dark)
     _ramp("dense", 0.20, 0.90),    # 3 top skills
     _ramp("PuBu", 0.35, 0.95),     # 4 spare
@@ -539,6 +537,34 @@ app.index_string = f"""<!DOCTYPE html>
                 margin-bottom: 0;
                 font-weight: 400;
             }}
+            /* About modal: readable Markdown sections and tables. */
+            .about-md h2 {{
+                font-size: 1.15rem;
+                font-weight: 600;
+                margin: 1.5rem 0 0.6rem;
+                padding-left: 10px;
+                border-left: 4px solid {INDIGO};
+            }}
+            .about-md h2:first-child {{ margin-top: 0; }}
+            .about-md table {{
+                width: 100%;
+                margin-bottom: 1rem;
+                border-collapse: collapse;
+                background-color: #ffffff;
+            }}
+            .about-md th, .about-md td {{
+                padding: 6px 10px;
+                border: 1px solid {SILVER};
+                vertical-align: top;
+            }}
+            .about-md thead th {{ background-color: {INDIGO_TINT}; }}
+            .about-md thead th:empty {{ display: none; }}
+            .about-md code {{
+                color: {INDIGO_DARK};
+                background-color: {INDIGO_TINT};
+                padding: 1px 5px;
+                border-radius: 4px;
+            }}
         </style>
     </head>
     <body>
@@ -597,45 +623,6 @@ fetch_modal = dbc.Modal(
                     html.Div(id="fetch-status", className="mt-3"),
                     type="default",
                 ),
-                # Scheduled email: saves the search above + recipient +
-                # cadence; Cloud Scheduler triggers the sends (see alerts.py).
-                html.Hr(className="my-3"),
-                html.H6("Email alerts", className="mb-2"),
-                dbc.Label("Send to", html_for="alert-recipient"),
-                dbc.Input(
-                    id="alert-recipient",
-                    type="email",
-                    value=(alerts.allowed_recipients() or [""])[0],
-                    className="mb-2",
-                ),
-                dbc.RadioItems(
-                    id="alert-cadence",
-                    options=[
-                        {"label": "Daily", "value": "daily"},
-                        {"label": "Weekly", "value": "weekly"},
-                    ],
-                    value="daily",
-                    inline=True,
-                    className="mb-2",
-                ),
-                html.Div(
-                    [
-                        dbc.Button("Schedule email", id="alert-save",
-                                   color="primary", outline=True, size="sm",
-                                   n_clicks=0, className="me-2"),
-                        dbc.Button("Send now", id="alert-send-now",
-                                   color="secondary", outline=True, size="sm",
-                                   n_clicks=0, className="me-2"),
-                        dbc.Button("Stop alerts", id="alert-stop",
-                                   color="secondary", outline=True, size="sm",
-                                   n_clicks=0),
-                    ],
-                    className="mb-2",
-                ),
-                dcc.Loading(
-                    html.Div(id="alert-status", className="small"),
-                    type="dot",
-                ),
             ]
         ),
         dbc.ModalFooter(
@@ -658,6 +645,115 @@ job_modal = dbc.Modal(
     id="job-modal",
     is_open=False,
     size="lg",
+    scrollable=True,
+)
+
+# About modal: an extra-large, scrollable panel of project documentation.
+# Edit ABOUT_MD to change the copy; each "## " heading is one section.
+ABOUT_MD = f"""
+## Overview
+
+Jooble.com Job Listings pulls recent postings from the
+[Jooble REST API](https://jooble.org/api/about), adds a few parsed fields to
+each one, and shows them in a searchable table, a map, and a set of charts.
+Despite the repo's name, nothing is scraped from HTML pages; every row comes
+from the official API.
+
+## Data source: the Jooble API
+
+| Item | Details |
+|---|---|
+| Endpoint | `POST https://jooble.org/api/<KEY>` |
+| Auth | API key as the last URL path segment (`KEY` env var) |
+| Request body | JSON: `keywords`, `location`, `radius`, `page`, `companysearch` |
+| Response | `jobs[]`: id, title, company, location, salary, type, snippet, link, updated, source |
+| Defaults | `"{DEFAULT_KEYWORDS}"` in `"{DEFAULT_LOCATION}"`, last {DEFAULT_DAYS} days |
+
+Jooble has no reliable server-side date filter, so the app applies the
+recency window itself, using each job's `updated` timestamp.
+
+## Pipeline
+
+1. The Fetch dialog, or the automatic fetch on page load, calls
+   `jooble_data.fetch_jobs(days, keywords, location)`.
+2. It requests pages one at a time, up to 10, and stops early once it has
+   100 jobs or a page comes back empty.
+3. HTTP 429 responses and network errors get a short wait and a retry. A 403
+   (bad key) or any other error raises `JoobleApiError`, with the key
+   redacted from the message.
+4. Rows older than the window are dropped, and so are job ids already seen on
+   an earlier page. In strict mode, a row is kept only if its title or
+   snippet contains one of the search phrases.
+5. Each row is cleaned and parsed offline. Snippet HTML is stripped to plain
+   text, the location is matched against a built-in city and state table
+   (there's no geocoding API), salary text becomes an estimated annual USD
+   figure, and seniority, minimum years of experience, and skill keywords are
+   pulled from the title and snippet.
+6. The resulting DataFrame is stored in the browser (`dcc.Store`) and feeds
+   the table, map, and charts. Changing the state filter redraws from that
+   store without calling the API again.
+
+## Architecture
+
+| Layer | File | Role |
+|---|---|---|
+| Data | `jooble_data.py` | API client, pagination, parsing, enrichment |
+| UI | `app.py` | Dash layout, callbacks, charts, modals |
+| Email | `mailer.py` | Emails the Listings table as a `.csv` |
+| Legacy | `scraper_source.py` | Original CLI script that writes `jooble_list.csv` |
+
+It's written in Python 3.12 with Dash, Plotly, Dash Bootstrap Components,
+Dash Mantine Components, pandas, requests, and BeautifulSoup.
+
+## Configuration
+
+Settings come from environment variables. A local `.env` file is loaded with
+python-dotenv, but a variable already set in the environment wins.
+
+| Variable | Purpose |
+|---|---|
+| `KEY` | Jooble API key (required) |
+| `SMTP_USER`, `SMTP_APP_PASSWORD` | Gmail account used to send CSV emails |
+| `ALERT_FROM` | Optional sender alias (defaults to `SMTP_USER`) |
+
+## Email CSV export
+
+Under **Listings**, enter an email address and press **Email CSV**. The app
+emails the rows currently in the table, with the state filter and any column
+filters or sorting applied, as a `.csv` attachment through Gmail SMTP. It
+sends at most one email every {mailer.SEND_COOLDOWN_SECONDS} seconds.
+
+## Deployment
+
+The Docker image runs the app with gunicorn (`app:server`) on `$PORT`, the
+setup Google Cloud Run expects. To run it locally, use `uv run app.py` and
+open http://127.0.0.1:8050.
+
+## Limitations
+
+- Jooble returns only a short excerpt of each description, so the app never
+  sees the full posting.
+- Salary, seniority, and skills are parsed from free text and can be wrong
+  or missing.
+- Jobs whose location isn't a recognized US city or state don't appear on
+  the map.
+"""
+
+about_modal = dbc.Modal(
+    [
+        dbc.ModalHeader(dbc.ModalTitle("About this project")),
+        dbc.ModalBody(
+            dcc.Markdown(ABOUT_MD, link_target="_blank",
+                         className="about-md"),
+        ),
+        dbc.ModalFooter(
+            dbc.Button("Close", id="close-about", color="secondary",
+                       outline=True, n_clicks=0)
+        ),
+    ],
+    id="about-modal",
+    is_open=False,
+    size="xl",
     scrollable=True,
 )
 
@@ -727,6 +823,11 @@ app.layout = dmc.MantineProvider(
                                     style={"marginRight": "15px"},
                                 ),
                                 dbc.Button(
+                                    "About", id="open-about",
+                                    color="primary", n_clicks=0,
+                                    style={"marginRight": "15px"},
+                                ),
+                                dbc.Button(
                                     "Home", href="https://brucea-lee.com",
                                     external_link=True, color="primary",
                                 ),
@@ -742,6 +843,7 @@ app.layout = dmc.MantineProvider(
             ),
             fetch_modal,
             job_modal,
+            about_modal,
             # Map row: info sidebar (left) + map (right).
             dmc.Grid(
                 [
@@ -806,6 +908,25 @@ app.layout = dmc.MantineProvider(
             ),
             html.Div(chart_card("chart-salary"), className="mt-3"),
             html.H4("Listings", className="mt-4 section-heading", style={"marginTop": "20px", "marginBottom": "20px"}),
+            # Email the rows currently shown in the table (state filter,
+            # column filters and sort applied) as a .csv attachment.
+            html.Div(
+                [
+                    dbc.InputGroup(
+                        [
+                            dbc.Input(id="csv-recipient", type="email",
+                                      placeholder="you@example.com",
+                                      maxLength=254),
+                            dbc.Button("Email CSV", id="csv-send",
+                                       color="primary", n_clicks=0),
+                        ],
+                        style={"maxWidth": "420px"},
+                    ),
+                    dcc.Loading(html.Div(id="csv-status", className="small"),
+                                type="dot"),
+                ],
+                className="d-flex flex-wrap align-items-center gap-3 mb-3",
+            ),
             dash_table.DataTable(
             id="jobs-table",
             columns=TABLE_COLUMNS,
@@ -877,87 +998,54 @@ def open_modal(_n, is_open):
 
 
 @app.callback(
-    Output("alert-status", "children"),
-    Input("fetch-modal", "is_open"),
-    Input("alert-save", "n_clicks"),
-    Input("alert-send-now", "n_clicks"),
-    Input("alert-stop", "n_clicks"),
-    State("keywords-input", "value"),
-    State("location-input", "value"),
-    State("days-input", "value"),
-    State("remote-store", "data"),
-    State("alert-recipient", "value"),
-    State("alert-cadence", "value"),
+    Output("about-modal", "is_open"),
+    Input("open-about", "n_clicks"),
+    Input("close-about", "n_clicks"),
+    State("about-modal", "is_open"),
     prevent_initial_call=True,
 )
-def alert_action(is_open, _save, _send, _stop, keywords, location, days,
-                 remote, recipient, cadence):
-    """Schedule / send-now / stop the email alert, or show its status when
-    the Fetch dialog opens."""
-    trigger = ctx.triggered_id
-    if trigger == "fetch-modal" and not is_open:
-        return no_update
-    warn = (None if alerts.smtp_configured() else dbc.Alert(
-        "Email isn't configured yet: set SMTP_USER and SMTP_APP_PASSWORD "
-        "(and ALERT_FROM for your alias).", color="warning",
-        className="py-1 px-2 mb-1"))
-    try:
-        if trigger == "alert-save":
-            keywords, location = normalize_search(keywords, location)
-            if remote:
-                location = REMOTE_LOCATION
-            schedule = alerts.new_schedule(
-                keywords=keywords, location=location, days=clamp_days(days),
-                recipient=recipient, cadence=cadence,
-                previous=alerts.load_schedule())
-            alerts.save_schedule(schedule)
-            msg = (f"Saved. {alerts.describe(schedule)} The first email "
-                   "goes out at the next scheduled run, or press Send now.")
-        elif trigger == "alert-send-now":
-            result = alerts.run_due_digest(force=True)
-            if result["status"] == "no-schedule":
-                msg = "Schedule an alert first, then Send now."
-            elif result["sent"]:
-                msg = f"Sent {result['sent']} new job(s)."
-            else:
-                msg = (f"No new jobs to send ({result['found']} found, all "
-                       "already emailed).")
-        elif trigger == "alert-stop":
-            alerts.save_schedule(None)
-            msg = "Alerts stopped."
-        else:
-            msg = alerts.describe(alerts.load_schedule())
-    except (alerts.AlertConfigError, JoobleApiError) as exc:
-        return [warn, dbc.Alert(str(exc), color="danger",
-                                className="py-1 px-2 mb-0")]
-    except smtplib.SMTPException as exc:
-        return [warn, dbc.Alert(f"Email failed: {exc}", color="danger",
-                                className="py-1 px-2 mb-0")]
-    except Exception as exc:  # storage (GCS / disk) errors
-        return [warn, dbc.Alert(f"Couldn't read or save the alert: {exc}",
-                                color="danger", className="py-1 px-2 mb-0")]
-    return [warn, html.Div(msg, className="text-muted")]
+def toggle_about(_open, _close, is_open):
+    return not is_open
 
 
-@server.route("/tasks/send-digest", methods=["POST"])
-def send_digest_task():
-    """Endpoint for Cloud Scheduler (e.g. hourly). Sends the saved alert
-    when its cadence is due. Requires the X-Task-Token header to match the
-    TASK_TOKEN env var, so the public URL can't be used to trigger sends."""
-    expected = os.environ.get("TASK_TOKEN", "")
-    if not expected:
-        return jsonify(error="TASK_TOKEN is not configured"), 503
-    given = request.headers.get("X-Task-Token", "")
-    if not hmac.compare_digest(given.encode(), expected.encode()):
-        return jsonify(error="forbidden"), 403
+# Columns written to the emailed CSV: the table's columns, in order, with the
+# plain URL in place of the Markdown link the table renders.
+CSV_COLUMNS = [(c["name"], "link" if c["id"] == "link_md" else c["id"])
+               for c in TABLE_COLUMNS]
+
+
+def _status(text, color=None):
+    if color is None:
+        return html.Div(text, className="text-muted")
+    return dbc.Alert(text, color=color, className="py-1 px-2 mb-0")
+
+
+@app.callback(
+    Output("csv-status", "children"),
+    Input("csv-send", "n_clicks"),
+    State("csv-recipient", "value"),
+    State("jobs-table", "derived_virtual_data"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def email_csv(_n, recipient, shown_rows, all_rows):
+    """Email the data viewer's current rows as a .csv to the typed address."""
+    # derived_virtual_data = rows after the table's own filters/sorting;
+    # it is None until the table has rendered once.
+    rows = shown_rows if shown_rows is not None else (all_rows or [])
+    if not rows:
+        return _status("There are no rows to send. Fetch jobs first.",
+                       "warning")
     try:
-        return jsonify(alerts.run_due_digest()), 200
-    except alerts.AlertConfigError as exc:
-        return jsonify(error=str(exc)), 500
-    except JoobleApiError as exc:
-        return jsonify(error=str(exc)), 502
-    except smtplib.SMTPException as exc:
-        return jsonify(error=f"smtp: {exc}"), 502
+        address = mailer.check_recipient(recipient)
+        csv_bytes = mailer.rows_to_csv(rows, CSV_COLUMNS)
+        mailer.send_email(mailer.build_email(address, csv_bytes, len(rows)))
+    except mailer.MailError as exc:
+        return _status(str(exc), "danger")
+    except (smtplib.SMTPException, OSError) as exc:
+        return _status(f"Email failed: {exc}", "danger")
+    noun = "job" if len(rows) == 1 else "jobs"
+    return _status(f"Sent {len(rows)} {noun} to {address}.", "success")
 
 
 @app.callback(
