@@ -971,7 +971,7 @@ app.layout = dmc.MantineProvider(
         ),
         html.Div(id="snippet-pane", className="my-2"),
         html.Footer(
-        "Bruce A. Lee © 2026, All Rights Reserved. Listings via the Jooble.org API. Not affiliated with or endorsed by Jooble.",
+        "Bruce A. Lee © 2026, All Rights Reserved. Listings via the Jooble.org API. Not affiliated with or endorsed by Jooble.org",
         style={
             "textAlign": "center",
             "padding": "10px",
