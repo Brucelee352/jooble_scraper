@@ -653,13 +653,13 @@ job_modal = dbc.Modal(
 ABOUT_MD = f"""
 ## Overview
 
-Jooble.com Job Listings pulls recent postings from the
-[Jooble REST API](https://jooble.org/api/about), adds a few parsed fields to
+The brucea-lee.com Job Listings Tracker pulls recent postings from the
+[Jooble.org REST API](https://jooble.org/api/about), adds a few parsed fields to
 each one, and shows them in a searchable table, a map, and a set of charts.
 Despite the repo's name, nothing is scraped from HTML pages; every row comes
-from the official API.
+from the official API. This tracker is not affiliated with or endorsed by Jooble.org.
 
-## Data source: the Jooble API
+## Data source: 
 
 | Item | Details |
 |---|---|
@@ -669,8 +669,7 @@ from the official API.
 | Response | `jobs[]`: id, title, company, location, salary, type, snippet, link, updated, source |
 | Defaults | `"{DEFAULT_KEYWORDS}"` in `"{DEFAULT_LOCATION}"`, last {DEFAULT_DAYS} days |
 
-Jooble has no reliable server-side date filter, so the app applies the
-recency window itself, using each job's `updated` timestamp.
+The app applies the recency window itself, using each job's `updated` timestamp.
 
 ## Pipeline
 
@@ -731,7 +730,7 @@ open http://127.0.0.1:8050.
 
 ## Limitations
 
-- Jooble returns only a short excerpt of each description, so the app never
+- The API returns only a short excerpt of each description, so the app never
   sees the full posting.
 - Salary, seniority, and skills are parsed from free text and can be wrong
   or missing.
@@ -972,7 +971,7 @@ app.layout = dmc.MantineProvider(
         ),
         html.Div(id="snippet-pane", className="my-2"),
         html.Footer(
-        "Bruce A. Lee © 2026, All Rights Reserved. Listings via the Jooble API. Not affiliated with or endorsed by Jooble.",
+        "Bruce A. Lee © 2026, All Rights Reserved. Listings via the Jooble.org API. Not affiliated with or endorsed by Jooble.",
         style={
             "textAlign": "center",
             "padding": "10px",
