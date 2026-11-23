@@ -88,11 +88,13 @@ def main():
 
     import app as app_mod
 
-    # 1. Error path: no KEY set -> user-presentable error mentioning KEY.
+    # 1. Error path: no KEY set -> generic user-facing error; config
+    # details (the KEY hint) go to the console log only.
     with mock.patch.dict(os.environ, clear=True):
         records, error = app_mod.do_fetch(7)
     assert records is None and error, "expected an error with no KEY set"
-    assert "KEY" in error, f"error should mention the KEY env var: {error!r}"
+    assert "temporarily unavailable" in error, error
+    assert "KEY" not in error, f"error should not leak config: {error!r}"
 
     # 2. Happy path under the mocked API.
     with mock.patch.dict(os.environ, {"KEY": "fake-key-for-mock-run"}), \
@@ -210,7 +212,7 @@ def main():
     # JSON-escaped in the raw response so we don't match on them).
     assert "data engineer" in text and "Texas" in text, text[:500]
 
-    print("PASS: ui_smoke — import w/o KEY, error path mentions KEY, "
+    print("PASS: ui_smoke — import w/o KEY, error path hides KEY, "
           "mocked fetch (custom/default keywords+location, remote toggle, "
           "days clamp), map figure w/ job ids, and Dash callback endpoint "
           "all OK")

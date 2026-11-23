@@ -9,6 +9,7 @@ Run with:
     uv run app.py        (or: .venv/Scripts/python app.py)
 """
 
+import logging
 import os
 import smtplib
 
@@ -36,6 +37,14 @@ from jooble_data import (
     _STATE_NAMES,
 )
 import mailer
+
+logger = logging.getLogger("jooble_scraper.app")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 # Light indigo / black / silver theme.
 INDIGO = "#5661c9"          # accent: buttons, links, map marker
@@ -100,12 +109,19 @@ def do_fetch(days: int, keywords: str | None = None,
         df = fetch_jobs(days=days, limit=None, keywords=keywords,
                         location=location, strict=True)
     except JoobleApiError as exc:
-        msg = str(exc)
+        # Full details go to the server console only; the UI gets a
+        # generic message so API/config internals are never shown to users.
+        detail = str(exc)
         if exc.status_code in (None, 401, 403):
-            msg += (
+            detail += (
                 " Check that the KEY environment variable is set to a "
                 "valid Jooble.org API key (https://jooble.org/api/about)."
             )
+        logger.error("Jooble fetch failed: %s", detail)
+        msg = ("Job listings are temporarily unavailable. "
+               "Please check back later.")
+        if exc.status_code is not None:
+            msg += f" (Error {exc.status_code})"
         return None, msg
 
     df = df.copy()
@@ -1152,10 +1168,9 @@ def render(records, state_value):
     if not records:
         msg = "Click \"Fetch jobs\" to pull listings."
         if not os.environ.get("KEY"):
-            msg += (
-                " Note: the KEY environment variable is not set - set it "
-                "to your Jooble.org API key before fetching."
-            )
+            logger.warning(
+                "KEY environment variable is not set - set it to your "
+                "Jooble.org API key before fetching.")
         empty_fig, _ = build_map(pd.DataFrame())
         empty = pd.DataFrame()
         return (
