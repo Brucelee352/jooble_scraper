@@ -104,7 +104,7 @@ def do_fetch(days: int, keywords: str | None = None,
         if exc.status_code in (None, 401, 403):
             msg += (
                 " Check that the KEY environment variable is set to a "
-                "valid Jooble API key (https://jooble.org/api/about)."
+                "valid Jooble.org API key (https://jooble.org/api/about)."
             )
         return None, msg
 
@@ -412,7 +412,7 @@ def build_skills_bar(df: pd.DataFrame) -> go.Figure:
 
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "Jooble Listings"
+app.title = "Job Tracker"
 server = app.server
 
 # Inline theme: light indigo / black / silver. The Google Font link (like
@@ -579,7 +579,7 @@ app.index_string = f"""<!DOCTYPE html>
 
 fetch_modal = dbc.Modal(
     [
-        dbc.ModalHeader(dbc.ModalTitle("Fetch jobs from Jooble")),
+        dbc.ModalHeader(dbc.ModalTitle("Fetch jobs")),
         dbc.ModalBody(
             [
                 dbc.Label("Keywords", html_for="keywords-input"),
@@ -807,10 +807,10 @@ app.layout = dmc.MantineProvider(
                     [
                         html.Div(
                             [
-                                html.H1("Jooble.com Job Listings",
+                                html.H1("Job Listings Tracker",
                                         className="app-title"),
                                 html.H6(
-                                    "Sourced directly through their API.",
+                                    "Sourced directly through API.",
                                     className="app-subtitle",
                                 ),
                             ]
@@ -1155,7 +1155,7 @@ def render(records, state_value):
         if not os.environ.get("KEY"):
             msg += (
                 " Note: the KEY environment variable is not set - set it "
-                "to your Jooble API key before fetching."
+                "to your Jooble.org API key before fetching."
             )
         empty_fig, _ = build_map(pd.DataFrame())
         empty = pd.DataFrame()
@@ -1293,7 +1293,7 @@ def job_detail_content(row):
             style={"whiteSpace": "pre-wrap", "lineHeight": "1.6"},
         ),
         html.Small(
-            "Jooble's API returns a description excerpt; open the posting "
+            "Jooble.org's API returns a description excerpt; open the posting "
             "for the full text.",
             className="text-muted",
         ),
